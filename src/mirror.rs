@@ -2,55 +2,56 @@ use crates_index::Index;
 use std::{collections::HashMap, ops::{Deref, DerefMut}};
 
 #[derive(PartialEq, Eq, Hash)]
-struct CrateVersion<'i> {
-    name: &'i str,
-    version: &'i str,
+struct CrateVersion {
+    name: String,
+    version: String,
 }
 
-impl<'i> CrateVersion<'i> {
-    pub fn new(name: &'i str, version: &'i str) -> Self {
-        CrateVersion { name, version }
+impl CrateVersion {
+    pub fn new(name: &str, version: &str) -> Self {
+        CrateVersion { name.to_string(), version.to_string() }
     }
 }
 
-struct FeaturesList<'i> {
-    list: Vec<&'i str>,
+struct FeaturesList {
+    list: Vec<String>,
 }
 
-impl<'i> FeaturesList<'i> {
+impl FeaturesList {
     fn new() -> Self {
         FeaturesList { list: Vec::new() }
     }
 
-    fn add_feature(&mut self, feature: &'i str) {
+    fn add_feature(&mut self, feature: &str) {
         if self.list.iter().position(|feat| feat == feature).is_none() {
-            self.list.push(feature);
+            self.list.push(feature.to_string());
         }
     }
 }
 
-impl<'i> Deref for FeaturesList<'i> {
-    type Target = Vec<&'i str>;
+impl<'i> Deref for FeaturesList {
+    type Target = Vec<String>;
 
     fn deref(&self) -> &Self::Target {
         &self.list
     }
 }
 
-impl DerefMut for FeaturesList<'_> {
+impl DerefMut for FeaturesList {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.list
     }
 }
 
-pub struct CratesIoIndex<'i> {
-    // NOTE: Lifetime of strings is tied to lifetime of Version, which is tied to lifetime of Crate, NOT Index!
-    index: &'i Index,
-    crates: HashMap<CrateVersion<'i>, FeaturesList<'i>>,
+pub struct CratesIoIndex {
+    index: Index,
+    // TODO: How to index HashMap?
+    crates: HashMap<CrateVersion, FeaturesList>,
 }
 
-impl<'i> CratesIoIndex<'i> {
-    pub fn new(index: &'i Index) -> Self {
+impl CratesIoIndex {
+    pub fn new() -> Self {
+        // TODO: Create Index.
         CratesIoIndex { index, crates: HashMap::new() }
     }
 
