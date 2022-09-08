@@ -1,8 +1,9 @@
 mod common;
-mod mirror;
+mod src_registry;
+mod local_registry;
 
 use anyhow::Context;
-use mirror::CratesIoIndex;
+use src_registry::CratesIoIndex;
 use log::error;
 
 fn try_main() -> anyhow::Result<()> {
