@@ -2,7 +2,7 @@ use crate::common::{CrateVersion, Result};
 use crates_index::DependencyKind;
 use log::warn;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ops::{Deref, DerefMut},
 };
 
@@ -95,6 +95,44 @@ impl SrcIndex {
         None
     }
 
+    fn get_enabled_dependency_features(
+        &self,
+        index_version: &crates_index::Version,
+        index_dep: &crates_index::Dependency,
+        features_enabled_from_parent: &Vec<String>,
+    ) -> Vec<String> {
+
+        unimplemented!()
+    }
+
+    fn get_enabled_features2(
+        &self,
+        index_version: &crates_index::Version,
+        features_enabled_from_parent: &Vec<String>,
+    ) -> Vec<String> {
+        let mut enabled_features = features_enabled_from_parent.iter().cloned().collect::<Vec<_>>();
+        let mut idx = 0;
+        while idx < enabled_features.len() {
+            let feature = &enabled_features[idx];
+            self.add_enabled_features(index_version, feature, &mut enabled_features);
+        }
+        for enabled_feature in &enabled_features {
+            // Can't add to set while iterating over it.
+        }
+        enabled_features
+    }
+
+    fn add_enabled_features(
+        &self,
+        index_version: &crates_index::Version,
+        feature: &String,
+        enabled_features: &mut Vec<String>
+    ) {
+        for (feat, feat_arr) in index_version.features() {
+            if (feat == feat_from_parent)
+        }
+    }
+
     fn get_enabled_features(
         &self,
         index_version: &crates_index::Version,
@@ -116,8 +154,8 @@ impl SrcIndex {
         // Each feature in the features table specifies an array of additional features
         // or optional dependencies to enable.
         // Only entries in these arrays can enable features of a dependency.
-        for (_, feat_list) in index_version.features() {
-            for feat in feat_list {
+        for (_, feat_arr) in index_version.features() {
+            for feat in feat_arr {
                 /*if is_feature_of_dependency(feat, index_dep) {
                     enabled_features.push(feat);
                 }*/
