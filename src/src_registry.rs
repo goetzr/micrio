@@ -41,6 +41,42 @@ pub struct SrcIndex {
     crates_map: HashMap<CrateVersion, FeaturesList>,
 }
 
+struct StoredIndexVec<T> {
+    items: Vec<T>,
+    index: usize,
+}
+
+impl<T> StoredIndexVec<T> {
+    fn new() -> Self {
+        StoredIndexVec { items: Vec::new(), index: 0 }
+    }
+
+    fn next_item(&mut self) -> Option<&T> {
+        if self.index < self.items.len() {
+            let next_item = &self.items[self.index];
+            self.index += 1;
+            Some(next_item)
+        } else {
+            None
+        }
+    }
+}
+
+impl<T> Deref for StoredIndexVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.items
+    }
+}
+
+impl<T> FromIterator<T> for StoredIndexVec<T> {
+    fn from_iter<I: IntoIterator<Item=T>>(iter: I) -> Self {
+        let items = iter.into_iter().collect::<Vec<_>>();
+        StoredIndexVec { items, index: 0 }
+    }
+}
+
 impl SrcIndex {
     pub fn new() -> Result<Self> {
         let index = crates_index::Index::new_cargo_default()?;
@@ -105,28 +141,67 @@ impl SrcIndex {
         unimplemented!()
     }
 
+    // Given the features explicitly enabled for a dependency where it's specified in the crate's
+    // Cargo.toml file, recursively look through the features table to determine if any of these
+    // features enable additional features for the dependency.
     fn get_enabled_features2(
         &self,
         index_version: &crates_index::Version,
-        features_enabled_from_parent: &Vec<String>,
+        index_dep: &crates_index::Dependency,
     ) -> Vec<String> {
-        let mut enabled_features = features_enabled_from_parent.iter().cloned().collect::<Vec<_>>();
-        let mut idx = 0;
-        while idx < enabled_features.len() {
-            let feature = &enabled_features[idx];
+        // Start with the features explicitly enabled for a dependency where it's specified in
+        // the crate's Cargo.toml file.
+        let mut enabled_features = index_dep.features().iter().cloned().collect::<StoredIndexVec<_>>();
+        
+        // Now recursively look through the features table to determine if any of 
+        while let Some(feature) = enabled_features.next_item() {
             self.add_enabled_features(index_version, feature, &mut enabled_features);
         }
-        for enabled_feature in &enabled_features {
-            // Can't add to set while iterating over it.
-        }
-        enabled_features
+        enabled_features.items
     }
+
+
+    
+    fn get_enabled_features_WORK_ON_THIS_ONE(
+        &self,
+        index_version: crates_index::Version,
+        enabled_crate_features: Vec<String>, // Features enabled from parent crate
+        index_dep: &crates_index::Dependency,
+    ) -> Vec<String> {
+        // Start with the features explicitly enabled for the dependency where it's specified in
+        // the crate's Cargo.toml file.
+        let mut enabled_features = index_dep.features().iter().cloned().collect::<StoredIndexVec<_>>();
+
+        // Add the implicit default feature if it's not explicity disabled or already in the list.
+        const DEFAULT_FEATURE: &str = "default";
+        if index_dep.has_default_features()
+            && enabled_features.iter().position(|f| f == DEFAULT_FEATURE) == None
+        {
+            enabled_features.push(DEFAULT_FEATURE.to_string());
+        }
+        
+        // Now, using the features enabled for the current crate, recursively look through
+        // the features table to determine if any additional features are enabled for
+        // the dependency.
+        let mut enabled_features = enabled_crate_features.iter().cloned().collect::<StoredIndexVec<_>>();
+        while let Some(feature) = enabled_features.next_item() {
+            index_version.features().iter().map(|(feat, feat_arr)| {
+                if feat == feature {
+                    // TODO: Why doesn't borrow checker complain here?
+                    enabled_features.extend(feat_arr.iter().cloned());
+                }
+            });
+        }
+        unimplemented!()
+    }
+
+    
 
     fn add_enabled_features(
         &self,
         index_version: &crates_index::Version,
         feature: &String,
-        enabled_features: &mut Vec<String>
+        enabled_features: &mut StoredIndexVec<String>,
     ) {
         for (feat, feat_arr) in index_version.features() {
             if (feat == feat_from_parent)
