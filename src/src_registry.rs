@@ -251,6 +251,63 @@ impl SrcIndex {
     }
 }
 
+enum FeatureTableEntry {
+    Feature(String),
+    Dependency(String),
+    WeakDependency {
+        dependency: String,
+        feature: String,
+    },
+    StrongDependency {
+        dependency: String,
+        feature: String,
+    }
+}
+
+fn parse_feature_table_entry(
+    crate_version: &crates_index::Version,
+    feat_or_dep: &String
+) -> std::result::Result<FeatureTableEntry, String> {
+    let parts = feat_or_dep.split("/").collect::<Vec<_>>();
+    match parts.len() {
+        1 => {
+            let name = parts[0].to_string();
+            if is_feature_of(&name, crate_version) {
+                Ok(FeatureTableEntry::Feature(name))
+            } else if (is_optional_dependency_of(&name, crate_version)) {
+                Ok(FeatureTableEntry::Dependency(name()))
+            } else {
+                Err(String::from("not a feature or an optional dependency"))
+            }
+        },
+        2 => {
+            // TODO: Need to convert to String?
+            if !is_optional_dependency_of(parts[0], crate_version)
+        },
+        _ => Err(String::from("only 1 '/' permitted"))
+    }
+}
+
+fn is_feature_of(name: String, crate_version: &crates_index::Version) -> bool {
+    crate_version
+        .features()
+        .iter()
+        .position(|(feat, _)| feat == name)
+        .is_some()
+}
+
+fn is_optional_dependency_of(name: String, crate_version: &crates_index::Version) -> bool {
+    crate_version
+        .dependencies()
+        .iter()
+        .filter(|dep| {
+            dep.is_optional() &&
+            (dep.kind() == DependencyKind::Normal || dep.kind() == DependencyKind::Build)
+        })
+        .position(|dep| dep.name() == name)
+        .is_some()
+}
+
 fn enables_optional_dependency(
     feat_or_dep: &String,
     optional_dependency: &crates_index::Dependency
