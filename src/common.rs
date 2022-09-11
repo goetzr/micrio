@@ -3,14 +3,14 @@ use std::fmt;
 use std::fmt::Display;
 
 #[derive(PartialEq, Eq, Hash, Clone)]
-pub struct CrateVersion {
+pub struct CrateId {
     pub name: String,
     pub version: String,
 }
 
-impl CrateVersion {
+impl CrateId {
     pub fn new(name: &str, version: &str) -> Self {
-        CrateVersion {
+        CrateId {
             name: name.to_string(),
             version: version.to_string(),
         }
@@ -33,7 +33,7 @@ impl Display for MicrioError {
 impl std::error::Error for MicrioError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            MicrioError::SrcRegistryError(e) => e,
+            MicrioError::SrcRegistryError(e) => Some(e),
         }
     }
 }
