@@ -147,12 +147,77 @@ impl SrcIndex {
         unimplemented!()
     }
     
+    // While determining the dependency's enabled features, we also find out if an
+    // optional dependency is enabled.
+    // The difficulty here is we can have:
+    //     A required dependency, which is always enabled.
+    //         Return the list of enabled features for the dependency
+    //     An optional dependency, which may or may not be enabled.
+    //         Return the list of enabled features for the dependency if it's enabled,
+    //         as well as whether the dependency is enabled or not.
+    /*
+    for dependency in crate_version.dependencies() {
+        // PROBLEM: is_dependency_enabled() would do a lot of the same work.
+        if !dependency.is_optional() || this.is_dependency_enabled(...) {
+            let enabled_features = self.get_enabled_dependency_features(...);
+            add_crate(dependency, enabled_features);
+        }
+        if dependency.is_optional() {
+
+        } else {
+            let enabled_features = self.get_enabled_dependency_features(
+                crate_version,
+                enabled_crate_features,
+                dependency
+            );
+        }
+    }
+    */
+
+    fn is_optional_dependency_enabled (
+        &self,
+        crate_version: &crates_index::Version,
+        enabled_crate_features: &Vec<String>,
+        optional_dependency: &crates_index::Dependency,
+    ) -> bool {
+        // Using the features enabled for the crate, recursively look through the
+        // features table to determine if the optional dependency is enabled.
+        let mut enabled_crate_features = enabled_crate_features
+            .iter()
+            .cloned()
+            .collect::<StoredIndexVec<String>>();
+        while let Some(enabled_crate_feature) = enabled_crate_features.next_item() {
+            crate_version.features().iter().map(|(feat, feat_or_dep_arr)| {
+                if feat == &enabled_crate_feature {
+                    for feat_or_dep in feat_or_dep_arr {
+                        if enables_optional_dependency(feat_or_dep, optional_dependency) {
+                            return true;
+                        }
+                        // TODO: Need to add feat_or_dep to enabled_crate_features,
+                        //       but only if it's a feature.
+                        //       Could be:
+                        //           dep       (some other dependency)
+                        //           dep/feat  (some other dependency)
+                        //           dep?feat  (doesn't enable dependency)
+                        //           feat      (this is where we want to add)
+                    }
+                }
+            });
+        }
+
+        return false;
+    }
+
     fn get_enabled_dependency_features(
         &self,
         crate_version: &crates_index::Version,
         enabled_crate_features: &Vec<String>,
         dependency: &crates_index::Dependency,
     ) -> Vec<String> {
+        // TODO: We could easily add these features in later, after we've determined
+        //       that the dependency is actually enabled.
+        //
+        /*
         // Start with the features explicitly enabled for the dependency where it's specified in
         // the crate's Cargo.toml file.
         let mut enabled_features = dependency.features().iter().cloned().collect::<Vec<_>>();
@@ -164,11 +229,15 @@ impl SrcIndex {
         {
             enabled_features.push(DEFAULT_FEATURE.to_string());
         }
+        */
         
-        // Now, using the features enabled for current crate, recursively look through
-        // the features table to determine if any additional features are enabled for
+        // Using the features enabled for crate, recursively look through the
+        // features table to determine if any additional features are enabled for
         // the dependency.
-        let mut enabled_crate_features = enabled_crate_features.iter().cloned().collect::<StoredIndexVec<String>>();
+        let mut enabled_crate_features = enabled_crate_features
+            .iter()
+            .cloned()
+            .collect::<StoredIndexVec<String>>();
         while let Some(crate_feature) = enabled_crate_features.next_item() {
             crate_version.features().iter().map(|(feat, feat_or_dep_arr)| {
                 if feat == &crate_feature {
@@ -182,18 +251,31 @@ impl SrcIndex {
     }
 }
 
+fn enables_optional_dependency(
+    feat_or_dep: &String,
+    optional_dependency: &crates_index::Dependency
+) -> bool {
+    // There are two ways an entry in the array portion of a crate's feature table can enable
+    // an optional dependency:
+    //     1. dep
+    //     2. dep/feat
+    let parts = feat_or_dep.split("/").collect::<Vec<_>>();
+    parts[0] == optional_dependency.name()
+}
+
 struct DependencyFeature {
     name: String,
     is_weak: bool,
 }
 
-fn parse_dependency_feature(feat_or_dep: &String) -> Option<DependencyFeature> {
+fn parse_dependency_feature(feat_or_dep: &String) -> std::result::Result<Option<DependencyFeature>> {
     // There are two ways an entry in the array portion of a crate's feature table can enable
     // a feature of a dependency:
-    //     1. dep/feat    (strong: Implicitly enables the dependency, then enables the dependency's feature.)
-    //     2. dep?/feat   (weak:   Does not enable the dependency.
-    //                             Only enables the dependency's feature if the dependency is enabled
-    //                             by another feature.)
+    //     1. dep/feat   (strong feature)
+    //            Enables the dependency, then enables the dependency's feature.
+    //     2. dep?/feat  (weak feature)
+    //            Does not enable the dependency.
+    //            Only enables the dependency's feature if the dependency is enabled by another feature.
     let parts = feat_or_dep.split("/").collect::<Vec<_>>();
     if parts.len() == 1 {
         return None
