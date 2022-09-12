@@ -266,29 +266,55 @@ enum FeatureTableEntry {
 
 fn parse_feature_table_entry(
     crate_version: &crates_index::Version,
-    feat_or_dep: &String
+    feat_or_dep: &String                                    // TODO: Come up with vocabulary!
 ) -> std::result::Result<FeatureTableEntry, String> {
     let parts = feat_or_dep.split("/").collect::<Vec<_>>();
     match parts.len() {
         1 => {
-            let name = parts[0].to_string();
-            if is_feature_of(&name, crate_version) {
-                Ok(FeatureTableEntry::Feature(name))
-            } else if (is_optional_dependency_of(&name, crate_version)) {
-                Ok(FeatureTableEntry::Dependency(name()))
+            let name = parts[0];
+            if is_feature_of(name, crate_version) {
+                Ok(FeatureTableEntry::Feature(name.to_string()))
+            } else if is_optional_dependency_of(name, crate_version) {
+                Ok(FeatureTableEntry::Dependency(name.to_string()))
             } else {
-                Err(String::from("not a feature or an optional dependency"))
+                Err(String::from("name not a feature or an optional dependency"))
             }
         },
         2 => {
-            // TODO: Need to convert to String?
-            if !is_optional_dependency_of(parts[0], crate_version)
+            let feat_name = parts[1];
+            if !is_feature_of(feat_name, crate_version) {
+                return Err(String::from("name after '/' not a feature"));
+            }
+            
+            let (dep_name, is_weak) = match parts[0].find("?") {
+                None => (parts[0], false),
+                Some(idx) => {
+                    if idx == parts[0].len() - 1 {
+                        // Trim off the trailing '?'.
+                        (&parts[0][..parts[0].len() - 1], true)
+                    } else {
+                        return Err(String::from("'?' not at end of dependency name"))
+                    }
+                },
+            };
+
+            if is_weak {
+                if !is_optional_dependency_of(dep_name, crate_version) {
+                    return Err(String::from("weak dependency: name before '/' not an optional dependency"))
+                }
+                FeatureTableEntry::Weak { dependency: dep_name.to_string(), feature: feat_name.to_string() }
+            } else {
+                if !is_dependency_of(dep_name, crate_version) {
+                    return Err(String::from("strong dependency: name before '/' not a dependency"))
+                }
+                FeatureTableEntry::Strong { dependency: dep_name.to_string(), feature: feat_name.to_string() }
+            }
         },
-        _ => Err(String::from("only 1 '/' permitted"))
+        _ => Err(String::from("multiple '/' separators"))
     }
 }
 
-fn is_feature_of(name: String, crate_version: &crates_index::Version) -> bool {
+fn is_feature_of(name: &str, crate_version: &crates_index::Version) -> bool {
     crate_version
         .features()
         .iter()
@@ -296,13 +322,24 @@ fn is_feature_of(name: String, crate_version: &crates_index::Version) -> bool {
         .is_some()
 }
 
-fn is_optional_dependency_of(name: String, crate_version: &crates_index::Version) -> bool {
+fn is_optional_dependency_of(name: &str, crate_version: &crates_index::Version) -> bool {
     crate_version
         .dependencies()
         .iter()
         .filter(|dep| {
             dep.is_optional() &&
             (dep.kind() == DependencyKind::Normal || dep.kind() == DependencyKind::Build)
+        })
+        .position(|dep| dep.name() == name)
+        .is_some()
+}
+
+fn is_dependency_of(name: &str, crate_version: &crates_index::Version) -> bool {
+    crate_version
+        .dependencies()
+        .iter()
+        .filter(|dep| {
+            dep.kind() == DependencyKind::Normal || dep.kind() == DependencyKind::Build
         })
         .position(|dep| dep.name() == name)
         .is_some()
