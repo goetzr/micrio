@@ -1,4 +1,4 @@
-use crate::common::{CrateId, Result};
+use crate::common::{CrateId, MicrioError, Result};
 use crates_index::DependencyKind;
 use log::warn;
 use std::{
@@ -264,10 +264,23 @@ enum FeatureTableEntry {
     }
 }
 
+fn parse_feature_table(
+    crate_version: &crates_index::Version,
+) -> Result<HashMap<String, Vec<FeatureTableEntry>>> {
+    for (feature, entries) in crate_version.features() {
+        let parsed_entries = Vec::new();
+        for entry in entries {
+            let parsed_entry = 
+        }
+    }
+
+    unimplemented!()
+}
+
 fn parse_feature_table_entry(
     crate_version: &crates_index::Version,
     feat_or_dep: &String                                    // TODO: Come up with vocabulary!
-) -> std::result::Result<FeatureTableEntry, String> {
+) -> Result<FeatureTableEntry> {
     let parts = feat_or_dep.split("/").collect::<Vec<_>>();
     match parts.len() {
         1 => {
@@ -277,15 +290,18 @@ fn parse_feature_table_entry(
             } else if is_optional_dependency_of(name, crate_version) {
                 Ok(FeatureTableEntry::Dependency(name.to_string()))
             } else {
-                Err(String::from("name not a feature or an optional dependency"))
+                Err(MicrioError::FeatureTableError {
+                    crate_name: crate_version.name().to_string(),
+                    crate_version: crate_version.version().to_string(),
+                    error_msg: String::from("name not a feature or an optional dependency")
+                })
             }
         },
         2 => {
+            // This should be a feature of the dependency, not the current crate.
+            // Delay checking this until later.
             let feat_name = parts[1];
-            if !is_feature_of(feat_name, crate_version) {
-                return Err(String::from("name after '/' not a feature"));
-            }
-            
+
             let (dep_name, is_weak) = match parts[0].find("?") {
                 None => (parts[0], false),
                 Some(idx) => {
