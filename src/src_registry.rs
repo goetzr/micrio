@@ -92,16 +92,21 @@ impl SrcIndex {
         })
     }
 
-    pub fn get_dependencies(
+    // TODO: Rename this function.
+    pub fn get_with_dependencies(
         &mut self,
         crate_ids: &Vec<CrateId>,
     ) -> Result<Vec<CrateId>> {
         for crate_id in crate_ids {
-            let crate_version = self.get_crate_version(crate_id)?
-            // Assume all dependencies are enabled for top-level crates.
-            for index_dep in index_version.dependencies().iter().filter(|d| {
+            let crate_version = self.get_crate_version(crate_id)?;
+            let parsed_features_table = parse_features_table(crate_version)?;
+            // Enable all features for top-level crates.
+            let enabled_features = parsed_features_table.iter().map(|feature, _| feature.clone()).collect::<Vec<_>>();
+            let mut enabled_dependencies = Vec::new();
+            for dependency in crate_version.dependencies().iter().filter(|d| {
                 d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build
             }) {
+
                 // Determine the features that are enabled for the crate.
                 let enabled_features = self.get_enabled_dependency_features(index_version, index_dep);
             }
@@ -240,16 +245,16 @@ enum FeatureTableEntry {
     Feature(String),
     Dependency(String),
     WeakDependencyFeature {
-        dependency: String,
+        dep_name: String,
         feature: String,
     },
     StrongDependencyFeature {
-        dependency: String,
+        dep_name: String,
         feature: String,
     }
 }
 
-fn parse_feature_table(
+fn parse_features_table(
     crate_version: &crates_index::Version,
 ) -> Result<HashMap<String, Vec<FeatureTableEntry>>> {
     let mut parsed_features_table = HashMap::new();
@@ -259,7 +264,7 @@ fn parse_feature_table(
             let parsed_entry = parse_feature_table_entry(crate_version, feature, entry)?;
             parsed_entries.push(parsed_entry);
         }
-        parsed_features_table.insert(feature.clone(), parsed_entries);
+        parsed_feature_tables.insert(feature.clone(), parsed_entries);
     }
     Ok(parsed_features_table)
 }
@@ -314,7 +319,7 @@ fn parse_feature_table_entry(
                         error_msg: format!("entry '{entry}' in feature '{feature}': name before '/' not an optional dependency")
                     })
                 }
-                Ok(FeatureTableEntry::WeakDependencyFeature { dependency: dep_name.to_string(), feature: feat_name.to_string() })
+                Ok(FeatureTableEntry::WeakDependencyFeature { dep_name: dep_name.to_string(), feature: feat_name.to_string() })
             } else {
                 if !is_dependency_of(dep_name, crate_version) {
                     return Err(MicrioError::FeatureTable {
@@ -323,7 +328,7 @@ fn parse_feature_table_entry(
                         error_msg: format!("entry '{entry}' in feature '{feature}': name before '/' not a dependency")
                     })
                 }
-                Ok(FeatureTableEntry::StrongDependencyFeature { dependency: dep_name.to_string(), feature: feat_name.to_string() })
+                Ok(FeatureTableEntry::StrongDependencyFeature { dep_name: dep_name.to_string(), feature: feat_name.to_string() })
             }
         },
         _ => Err(MicrioError::FeatureTable {
@@ -363,6 +368,61 @@ fn is_dependency_of(name: &str, crate_version: &crates_index::Version) -> bool {
         })
         .position(|dep| dep.name() == name)
         .is_some()
+}
+
+fn get_enabled_dependencies<'a>(
+    crate_version: &'a crates_index::Version,
+    enabled_features: &HashMap<String, Vec<FeatureTableEntry>>
+) -> Vec<&'a crates_index::Dependency> {
+    let mut enabled_dependencies = Vec::new();
+    for dependency in crate_version.dependencies() {
+        if !dependency.is_optional() || is_dependency_enabled(crate_version, enabled_features, dependency) {
+            enabled_dependencies.push(dependency);
+        }
+    }
+    enabled_dependencies
+}
+
+fn is_dependency_enabled (
+    crate_version: &crates_index::Version,
+    enabled_features: &HashMap<String, Vec<FeatureTableEntry>>,
+    dependency: &crates_index::Dependency
+) -> bool {
+    for (_, entries) in enabled_features {
+        for entry in entries {
+            if feature_table_entry_enables_dependency(entry, dependency) {
+                return true;
+            }
+
+        }
+    }
+    false
+}
+
+fn feature_table_entry_enables_dependency(
+    entry: &FeatureTableEntry,
+    dependency: &crates_index::Dependency
+) -> bool {
+    match entry {
+        FeatureTableEntry::Dependency(dep_name) => dep_name == dependency.name(),
+        FeatureTableEntry::StrongDependencyFeature { dep_name, feature } => dep_name == dependency.name(),
+        // TODO: Pass in enabled_features
+        FeatureTableEntry::Feature(feature) => feature_enables_dependency(feature, feature_entries, dependency),
+        _ => false,
+    }
+}
+
+fn feature_enables_dependency(
+    feature: &String,
+    feature_entries: &Vec<FeatureTableEntry>,
+    dependency: &crates_index::Dependency
+) -> bool {
+    for entry in feature_entries {
+        if feature_table_entry_enables_dependency(entry, dependency) {
+            return true;
+        }
+    }
+    false
 }
 
 fn enables_optional_dependency(
