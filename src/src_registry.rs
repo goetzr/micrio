@@ -97,44 +97,29 @@ impl SrcIndex {
         crate_ids: &Vec<CrateId>,
     ) -> Result<Vec<CrateId>> {
         for crate_id in crate_ids {
-            if let Some(index_version) = self.get_crate_version_from_index(crate_id) {
-                // Assume all dependencies are enabled for top-level crates.
-                for index_dep in index_version.dependencies().iter().filter(|d| {
-                    d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build
-                }) {
-                    // Determine the features that are enabled for the crate.
-                    let enabled_features = self.get_enabled_dependency_features(index_version, index_dep);
-                }
-
-                self.update_dependencies(index_version);
+            let crate_version = self.get_crate_version(crate_id)?
+            // Assume all dependencies are enabled for top-level crates.
+            for index_dep in index_version.dependencies().iter().filter(|d| {
+                d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build
+            }) {
+                // Determine the features that are enabled for the crate.
+                let enabled_features = self.get_enabled_dependency_features(index_version, index_dep);
             }
+
+            self.update_dependencies(index_version);
         }
         unimplemented!()
     }
 
     fn update_dependencies(&mut self, version: &crates_index::Version) {}
 
-    fn get_crate_version_from_index(
+    fn get_crate_version(
         &self,
         crate_id: &CrateId,
-    ) -> Option<&crates_index::Version> {
-        if let Some(index_crate) = self.index.crate_(&crate_id.name) {
-            for index_version in index_crate.versions().iter().rev() {
-                if index_version.version() == crate_id.version {
-                    return Some(index_version);
-                }
-            }
-            warn!(
-                "failed to find version {} of the '{}' crate in the source index",
-                crate_id.version, crate_id.name
-            );
-        } else {
-            warn!(
-                "failed to find the '{}' crate in the source index",
-                crate_id.name
-            );
-        }
-        None
+    ) -> Result<&crates_index::Version> {
+        self.index.crate_(&crate_id.name).ok_or(
+            MicrioError::CrateNotFound { crate_name: crate_id.name.clone(), crate_version: crate_id.version.clone() }
+        )
     }
 
     // TODO: Merge this functionality into get_enabled_dependency_features.
@@ -254,11 +239,11 @@ impl SrcIndex {
 enum FeatureTableEntry {
     Feature(String),
     Dependency(String),
-    WeakDependency {
+    WeakDependencyFeature {
         dependency: String,
         feature: String,
     },
-    StrongDependency {
+    StrongDependencyFeature {
         dependency: String,
         feature: String,
     }
@@ -267,21 +252,24 @@ enum FeatureTableEntry {
 fn parse_feature_table(
     crate_version: &crates_index::Version,
 ) -> Result<HashMap<String, Vec<FeatureTableEntry>>> {
+    let mut parsed_features_table = HashMap::new();
     for (feature, entries) in crate_version.features() {
-        let parsed_entries = Vec::new();
+        let mut parsed_entries = Vec::new();
         for entry in entries {
-            let parsed_entry = 
+            let parsed_entry = parse_feature_table_entry(crate_version, feature, entry)?;
+            parsed_entries.push(parsed_entry);
         }
+        parsed_features_table.insert(feature.clone(), parsed_entries);
     }
-
-    unimplemented!()
+    Ok(parsed_features_table)
 }
 
 fn parse_feature_table_entry(
     crate_version: &crates_index::Version,
-    feat_or_dep: &String                                    // TODO: Come up with vocabulary!
+    feature: &String,
+    entry: &String
 ) -> Result<FeatureTableEntry> {
-    let parts = feat_or_dep.split("/").collect::<Vec<_>>();
+    let parts = entry.split("/").collect::<Vec<_>>();
     match parts.len() {
         1 => {
             let name = parts[0];
@@ -290,10 +278,10 @@ fn parse_feature_table_entry(
             } else if is_optional_dependency_of(name, crate_version) {
                 Ok(FeatureTableEntry::Dependency(name.to_string()))
             } else {
-                Err(MicrioError::FeatureTableError {
+                Err(MicrioError::FeatureTable {
                     crate_name: crate_version.name().to_string(),
                     crate_version: crate_version.version().to_string(),
-                    error_msg: String::from("name not a feature or an optional dependency")
+                    error_msg: format!("entry '{entry}' in feature '{feature}': '{entry}' not a feature or an optional dependency")
                 })
             }
         },
@@ -309,24 +297,40 @@ fn parse_feature_table_entry(
                         // Trim off the trailing '?'.
                         (&parts[0][..parts[0].len() - 1], true)
                     } else {
-                        return Err(String::from("'?' not at end of dependency name"))
+                        return Err(MicrioError::FeatureTable {
+                            crate_name: crate_version.name().to_string(),
+                            crate_version: crate_version.version().to_string(),
+                            error_msg: format!("entry '{entry}' in feature '{feature}': '?' not at end of dependency name")
+                        })
                     }
                 },
             };
 
             if is_weak {
                 if !is_optional_dependency_of(dep_name, crate_version) {
-                    return Err(String::from("weak dependency: name before '/' not an optional dependency"))
+                    return Err(MicrioError::FeatureTable {
+                        crate_name: crate_version.name().to_string(),
+                        crate_version: crate_version.version().to_string(),
+                        error_msg: format!("entry '{entry}' in feature '{feature}': name before '/' not an optional dependency")
+                    })
                 }
-                FeatureTableEntry::Weak { dependency: dep_name.to_string(), feature: feat_name.to_string() }
+                Ok(FeatureTableEntry::WeakDependencyFeature { dependency: dep_name.to_string(), feature: feat_name.to_string() })
             } else {
                 if !is_dependency_of(dep_name, crate_version) {
-                    return Err(String::from("strong dependency: name before '/' not a dependency"))
+                    return Err(MicrioError::FeatureTable {
+                        crate_name: crate_version.name().to_string(),
+                        crate_version: crate_version.version().to_string(),
+                        error_msg: format!("entry '{entry}' in feature '{feature}': name before '/' not a dependency")
+                    })
                 }
-                FeatureTableEntry::Strong { dependency: dep_name.to_string(), feature: feat_name.to_string() }
+                Ok(FeatureTableEntry::StrongDependencyFeature { dependency: dep_name.to_string(), feature: feat_name.to_string() })
             }
         },
-        _ => Err(String::from("multiple '/' separators"))
+        _ => Err(MicrioError::FeatureTable {
+            crate_name: crate_version.name().to_string(),
+            crate_version: crate_version.version().to_string(),
+            error_msg: format!("entry '{entry}' in feature '{feature}': multiple '/' separators")
+        })
     }
 }
 
