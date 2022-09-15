@@ -62,15 +62,15 @@ impl SrcIndex {
         })
     }
 
-    pub fn get_with_dependencies(
+    pub fn get_dependencies(
         &mut self,
         crate_ids: &Vec<CrateId>,
     ) -> Result<Vec<CrateId>> {
         for crate_id in crate_ids {
             let crate_version = self.get_crate_version(crate_id)?;
-            let parsed_features_table = parse_features_table(crate_version)?;
+            let features_table = parse_features_table(crate_version)?;
             // Enable all features for top-level crates.
-            let enabled_features = parsed_features_table.iter().map(|(feature, _)| feature.clone()).collect::<Vec<_>>();
+            let enabled_crate_features = features_table.iter().map(|(feature, _)| feature.clone()).collect::<Vec<_>>();
             let mut enabled_dependencies = Vec::new();
             for dependency in crate_version
                 .dependencies()
@@ -80,7 +80,10 @@ impl SrcIndex {
                     d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build
                 })
                 {
-                    
+                    if let Some(enabled_dep_features) = get_enabled_dependency_features(dependency, &enabled_crate_features, &features_table) {
+                        let dep_crate_version = get_latest_compatible_crate_version(dependency);
+                        self.crates_map.insert(CrateId::new(dep_crate_version.name(), dep_crate_version.version()));
+                    }
                 }
         }
         unimplemented!()
@@ -90,9 +93,20 @@ impl SrcIndex {
         &self,
         crate_id: &CrateId,
     ) -> Result<&crates_index::Version> {
-        self.index.crate_(&crate_id.name).ok_or(
+        let crat = self.index.crate_(&crate_id.name).ok_or(
             MicrioError::CrateNotFound { crate_name: crate_id.name.clone(), crate_version: crate_id.version.clone() }
-        )
+        )?;
+        let crate_version = crat.versions().iter().rev().find(|v| v.version() == crate_id.version).ok_or(
+            MicrioError::CrateNotFound { crate_name: crate_id.name.clone(), crate_version: crate_id.version.clone() }
+        )?;
+        Ok(crate_version)
+    }
+
+    fn get_latest_compatible_crate_version(&self, dependency: &crates_index::Dependency) -> Result<&crates_index::Version> {
+        let dep_crate_name = get_dependency_crate_name(dependency);
+        let version_req = semver::VersionReq::parse(dependency.requirement())?;
+        let dep_crate_version = self.get_crate_version()
+        unimplemented!()
     }
 }
 
@@ -119,7 +133,7 @@ fn parse_features_table(
             let parsed_entry = parse_feature_table_entry(crate_version, feature, entry)?;
             parsed_entries.push(parsed_entry);
         }
-        parsed_features_tables.insert(feature.clone(), parsed_entries);
+        parsed_features_table.insert(feature.clone(), parsed_entries);
     }
     Ok(parsed_features_table)
 }
@@ -195,21 +209,14 @@ fn parse_feature_table_entry(
 }
 
 fn is_feature_of(name: &str, crate_version: &crates_index::Version) -> bool {
-    crate_version
-        .features()
-        .iter()
-        .position(|(feat, _)| feat == name)
-        .is_some()
+    crate_version.features().contains_key(name)
 }
 
 fn is_optional_dependency_of(name: &str, crate_version: &crates_index::Version) -> bool {
     crate_version
         .dependencies()
         .iter()
-        .filter(|dep| {
-            dep.is_optional() &&
-            (dep.kind() == DependencyKind::Normal || dep.kind() == DependencyKind::Build)
-        })
+        .filter(|dep| dep.is_optional())
         .position(|dep| dep.name() == name)
         .is_some()
 }
@@ -218,9 +225,6 @@ fn is_dependency_of(name: &str, crate_version: &crates_index::Version) -> bool {
     crate_version
         .dependencies()
         .iter()
-        .filter(|dep| {
-            dep.kind() == DependencyKind::Normal || dep.kind() == DependencyKind::Build
-        })
         .position(|dep| dep.name() == name)
         .is_some()
 }
@@ -271,4 +275,12 @@ fn feature_enables_dependency(
         }
     }
     false
+}
+
+fn get_dependency_crate_name(dependency: &crates_index::Dependency) -> &str {
+    if let Some(name) = dependency.package() {
+        name
+    } else {
+        dependency.name()
+    }
 }
