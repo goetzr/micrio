@@ -102,10 +102,29 @@ impl SrcIndex {
         Ok(crate_version)
     }
 
-    fn get_latest_compatible_crate_version(&self, dependency: &crates_index::Dependency) -> Result<&crates_index::Version> {
+    fn get_dependency_crate_version(
+        &self,
+        crate_version: &crates_index::Version,
+        dependency: &crates_index::Dependency
+    ) -> Result<&crates_index::Version> {
         let dep_crate_name = get_dependency_crate_name(dependency);
-        let version_req = semver::VersionReq::parse(dependency.requirement())?;
-        let dep_crate_version = self.get_crate_version()
+        let version_req = semver::VersionReq::parse(dependency.requirement()).map_err(
+            |e| {
+                MicrioError::SemVer {
+                    crate_name: crate_version.name().to_string(),
+                    crate_version: crate_version.version().to_string(),
+                    dependency_name: dep_crate_name.to_string(),
+                    version_req: dependency.requirement().to_string(),
+                    error: e }
+            }
+        )?;
+        let dep_crate = self.index.crate_(dep_crate_name).ok_or(
+            MicrioError::CrateNotFound { crate_name: crate_id.name.clone(), crate_version: crate_id.version.clone() }
+        )?;
+        let dep_crate_version = crat.versions().iter().rev().find(|v| v.version() == crate_id.version).ok_or(
+            MicrioError::CrateNotFound { crate_name: crate_id.name.clone(), crate_version: crate_id.version.clone() }
+        )?;
+        Ok(crate_version)
         unimplemented!()
     }
 }
