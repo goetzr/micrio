@@ -1,14 +1,13 @@
 use crate::common::{CrateId, MicrioError, Result};
 use crates_index::DependencyKind;
-use log::warn;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     ops::{Deref, DerefMut},
 };
 
 pub struct SrcIndex {
     index: crates_index::Index,
-    crates_map: HashMap<CrateId, FeaturesList>,
+    crates_map: HashMap<CrateId, String>,
 }
 
 struct StoredIndexVec<T> {
@@ -71,7 +70,7 @@ impl SrcIndex {
             let features_table = parse_features_table(crate_version)?;
             // Enable all features for top-level crates.
             let enabled_crate_features = features_table.iter().map(|(feature, _)| feature.clone()).collect::<Vec<_>>();
-            let mut enabled_dependencies = Vec::new();
+            //let mut enabled_dependencies = Vec::new();
             for dependency in crate_version
                 .dependencies()
                 .iter()
@@ -80,13 +79,16 @@ impl SrcIndex {
                     d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build
                 })
                 {
-                    if let Some(enabled_dep_features) = get_enabled_dependency_features(dependency, &enabled_crate_features, &features_table) {
-                        let dep_crate_version = get_latest_compatible_crate_version(dependency);
-                        self.crates_map.insert(CrateId::new(dep_crate_version.name(), dep_crate_version.version()));
-                    }
+                    
                 }
         }
         unimplemented!()
+    }
+
+    fn get_crate(&self, name: &str) -> Result<crates_index::Crate> {
+        self.index.crate_(&crate_id.name).ok_or(
+            MicrioError::CrateNotFound { crate_name: crate_id.name.clone() }
+        )?
     }
 
     fn get_crate_version(
@@ -94,10 +96,10 @@ impl SrcIndex {
         crate_id: &CrateId,
     ) -> Result<&crates_index::Version> {
         let crat = self.index.crate_(&crate_id.name).ok_or(
-            MicrioError::CrateNotFound { crate_name: crate_id.name.clone(), crate_version: crate_id.version.clone() }
+            MicrioError::CrateNotFound { crate_name: crate_id.name.clone() }
         )?;
         let crate_version = crat.versions().iter().rev().find(|v| v.version() == crate_id.version).ok_or(
-            MicrioError::CrateNotFound { crate_name: crate_id.name.clone(), crate_version: crate_id.version.clone() }
+            MicrioError::CrateVersionNotFound { crate_name: crate_id.name.clone(), crate_version: crate_id.version.clone() }
         )?;
         Ok(crate_version)
     }
@@ -110,22 +112,32 @@ impl SrcIndex {
         let dep_crate_name = get_dependency_crate_name(dependency);
         let version_req = semver::VersionReq::parse(dependency.requirement()).map_err(
             |e| {
-                MicrioError::SemVer {
+                MicrioError::SemVerRequirement {
                     crate_name: crate_version.name().to_string(),
                     crate_version: crate_version.version().to_string(),
                     dependency_name: dep_crate_name.to_string(),
-                    version_req: dependency.requirement().to_string(),
                     error: e }
             }
         )?;
         let dep_crate = self.index.crate_(dep_crate_name).ok_or(
-            MicrioError::CrateNotFound { crate_name: crate_id.name.clone(), crate_version: crate_id.version.clone() }
+            MicrioError::CrateNotFound { crate_name: dep_crate_name.to_string() }
         )?;
-        let dep_crate_version = crat.versions().iter().rev().find(|v| v.version() == crate_id.version).ok_or(
-            MicrioError::CrateNotFound { crate_name: crate_id.name.clone(), crate_version: crate_id.version.clone() }
-        )?;
-        Ok(crate_version)
-        unimplemented!()
+        for dep_crate_version in dep_crate.versions().iter().rev() {
+            let version_str = dep_crate_version.version();
+            let version = semver::Version::parse(version_str).map_err(
+                |e| {
+                    MicrioError::SemVerVersion { crate_name: dep_crate_name.to_string(), crate_version: version_str.to_string(), error: e }
+                }
+            )?;
+            if (version_req.matches(&version)) {
+                return Ok(dep_crate_version);
+            }
+        }
+        Err(MicrioError::CompatibleCrateNotFound {
+            crate_name: crate_version.name().to_string(),
+            crate_version: crate_version.version().to_string(),
+            dependency_name: dep_crate_name.to_string()
+        })
     }
 }
 
@@ -246,54 +258,6 @@ fn is_dependency_of(name: &str, crate_version: &crates_index::Version) -> bool {
         .iter()
         .position(|dep| dep.name() == name)
         .is_some()
-}
-
-fn is_dependency_enabled(
-    dependency: &crates_index::Dependency,
-    parsed_features_table: &HashMap<String, Vec<FeatureTableEntry>>,
-    enabled_features: &Vec<String>,
-) -> bool {
-    // Walk the features table, building up the list of enabled features, until it's determined
-    // that the depdendency is enabled or we hit the end of the features table.
-    let mut enabled_features = enabled_features.iter().cloned().collect::<StoredIndexVec<String>>();
-    let mut feature = enabled_features.next_item();
-    while let Some(mut feature) = feature {
-        for entry in 
-    }
-    false
-}
-
-fn feature_enables_dependency(
-    feature: &String,
-    dependency: &crates_index::Dependency,
-) -> bool {
-
-}
-
-fn feature_table_entry_enables_dependency(
-    entry: &FeatureTableEntry,
-    dependency: &crates_index::Dependency,
-    enabled_features: &Vec<String>,
-) -> bool {
-    match entry {
-        FeatureTableEntry::Dependency(dep_name) => dep_name == dependency.name(),
-        FeatureTableEntry::StrongDependencyFeature { dep_name, feature } => dep_name == dependency.name(),
-        FeatureTableEntry::Feature(feature) => feature_enables_dependency(feature, feature_entries, dependency),
-        _ => false,
-    }
-}
-
-fn feature_enables_dependency(
-    feature: &String,
-    feature_entries: &Vec<FeatureTableEntry>,
-    dependency: &crates_index::Dependency
-) -> bool {
-    for entry in feature_entries {
-        if feature_table_entry_enables_dependency(entry, dependency) {
-            return true;
-        }
-    }
-    false
 }
 
 fn get_dependency_crate_name(dependency: &crates_index::Dependency) -> &str {

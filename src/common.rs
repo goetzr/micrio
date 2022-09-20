@@ -28,18 +28,21 @@ pub enum MicrioError {
         crate_name: String,
         crate_version: String,
     },
-    SemVer {
+    SemVerRequirement {
         crate_name: String,
         crate_version: String,
         dependency_name: String,
-        version_req: String,
+        error: semver::Error,
+    },
+    SemVerVersion {
+        crate_name: String,
+        crate_version: String,
         error: semver::Error,
     },
     CompatibleCrateNotFound {
         crate_name: String,
         crate_version: String,
         dependency_name: String,
-        version_req: String,
     },
     FeatureTable {
         crate_name: String,
@@ -58,12 +61,14 @@ impl Display for MicrioError {
             MicrioError::CrateVersionNotFound { crate_name, crate_version } => {
                 write!(f, "version {} of {} not found in the source registry", crate_name, crate_version)
             },
-            MicrioError::SemVer { crate_name, crate_version, dependency_name, version_req, error } => {
-                write!(f, "semver parse error of '{}' with {} version {} in its {} dependency: {}", version_req, crate_name, crate_version, dependency_name, error)
+            MicrioError::SemVerRequirement { crate_name, crate_version, dependency_name, error } => {
+                write!(f, "error parsing version requirement for the {} dependency of {} version {}: {}", dependency_name, crate_name, crate_version, error)
             },
-            TODO: Pick up here!
-            MicrioError::CompatibleCrateNotFound { crate_name, crate_version, dependency_name, version_req } => {
-                write!(f, "compatible crate not found in the source registry for {} with version requirement {}", crate_name, crate_version)
+            MicrioError::SemVerVersion { crate_name, crate_version, error } => {
+                write!(f, "error parsing version string for {} version {}: {}", crate_name, crate_version, error)
+            },
+            MicrioError::CompatibleCrateNotFound { crate_name, crate_version, dependency_name } => {
+                write!(f, "compatible crate not found in the source registry for the {} dependency of {} version {}", dependency_name, crate_name, crate_version)
             }
             MicrioError::FeatureTable { crate_name, crate_version, error_msg } => {
                 write!(f, "feature table error with {} version {}: {}", crate_name, crate_version, error_msg)
@@ -76,8 +81,11 @@ impl std::error::Error for MicrioError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             MicrioError::SrcRegistry(e) => Some(e),
-            MicrioError::CrateNotFound { crate_name, crate_version } => None,
-            MicrioError::SemVer { crate_name, crate_version, dependency_name, version_req, error } => Some(error),
+            MicrioError::CrateNotFound { crate_name } => None,
+            MicrioError::CrateVersionNotFound { crate_name, crate_version } => None,
+            MicrioError::SemVerRequirement { crate_name, crate_version, dependency_name, error } => Some(error),
+            MicrioError::SemVerVersion { crate_name, crate_version, error } => Some(error),
+            MicrioError::CompatibleCrateNotFound { crate_name, crate_version, dependency_name } => None,
             MicrioError::FeatureTable { crate_name, crate_version, error_msg } => None,
         }
     }
