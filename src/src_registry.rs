@@ -1,13 +1,14 @@
 use crate::common::{CrateId, MicrioError, Result};
 use crates_index::DependencyKind;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
+    iter::Extend,
     ops::{Deref, DerefMut},
 };
 
 pub struct SrcIndex {
     index: crates_index::Index,
-    crates_map: HashMap<CrateId, String>,
+    dependencies_map: HashMap<CrateId, HashSet<String>>,
 }
 
 struct StoredIndexVec<T> {
@@ -60,7 +61,7 @@ impl SrcIndex {
         let index = crates_index::Index::new_cargo_default()?;
         Ok(SrcIndex {
             index,
-            crates_map: HashMap::new(),
+            dependencies_map: HashMap::new(),
         })
     }
 
@@ -81,10 +82,27 @@ impl SrcIndex {
                 .filter(|d| d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
             {
                 if dependency.is_optional() {
-                    let enabled_features = get_enabled_features_for_optional_dependency(crate_version, &features_table, dependency);
-                    if ...
+                    let enabled_features = get_enabled_features_for_optional_dependency(
+                        crate_version,
+                        &features_table,
+                        &enabled_crate_features,
+                        dependency,
+                    );
+                    if let Some(enabled_features) = enabled_features {
+                        let dep_crate_version =
+                            self.add_dependency(crate_version, dependency, &enabled_features)?;
+                        enabled_dependencies.push(dep_crate_version);
+                    }
                 } else {
-                    let enabled_features = get_enabled_features_for_dependency(crate_version, &features_table, dependency);
+                    let enabled_features = get_enabled_features_for_dependency(
+                        crate_version,
+                        &features_table,
+                        &enabled_crate_features,
+                        dependency,
+                    );
+                    let dep_crate_version =
+                        self.add_dependency(crate_version, dependency, &enabled_features)?;
+                    enabled_dependencies.push(dep_crate_version);
                 }
             }
         }
@@ -151,6 +169,26 @@ impl SrcIndex {
             crate_version: crate_version.version().to_string(),
             dependency_name: dep_crate.name().to_string(),
         })
+    }
+
+    fn add_dependency(
+        &mut self,
+        crate_version: &crates_index::Version,
+        dependency: &crates_index::Dependency,
+        enabled_features: &Vec<String>,
+    ) -> Result<crates_index::Version> {
+        let dep_crate = self.get_dependency_crate(dependency)?;
+        let dep_crate_version =
+            self.get_dependency_crate_version(crate_version, dependency, &dep_crate)?;
+        let dep_crate_id = CrateId::new(dep_crate.name(), dep_crate_version.version());
+        if self.dependencies_map.contains_key(&dep_crate_id) {
+            let feature_set = self.dependencies_map.get_mut(&dep_crate_id).unwrap();
+            feature_set.extend(enabled_features.clone());
+        } else {
+            let feature_set = HashSet::from_iter(enabled_features.clone());
+            self.dependencies_map.insert(dep_crate_id, feature_set);
+        }
+        Ok(dep_crate_version.clone())
     }
 }
 
@@ -281,10 +319,20 @@ fn get_dependency_crate_name(dependency: &crates_index::Dependency) -> &str {
     }
 }
 
-fn get_enabled_features_for_optional_dependency(crate_version: &crates_index::Version, features_table: &HashMap<String, Vec<FeatureTableEntry>>, dependency: &crates_index::Dependency) -> Option<Vec<String>> {
+fn get_enabled_features_for_optional_dependency(
+    crate_version: &crates_index::Version,
+    features_table: &HashMap<String, Vec<FeatureTableEntry>>,
+    enabled_crate_features: &Vec<String>,
+    dependency: &crates_index::Dependency,
+) -> Option<Vec<String>> {
     unimplemented!()
 }
 
-fn get_enabled_features_for_dependency(crate_version: &crates_index::Version, features_table: &HashMap<String, Vec<FeatureTableEntry>>, dependency: &crates_index::Dependency) -> Vec<String> {
+fn get_enabled_features_for_dependency(
+    crate_version: &crates_index::Version,
+    features_table: &HashMap<String, Vec<FeatureTableEntry>>,
+    enabled_crate_features: &Vec<String>,
+    dependency: &crates_index::Dependency,
+) -> Vec<String> {
     unimplemented!()
 }
