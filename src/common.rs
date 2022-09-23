@@ -49,6 +49,11 @@ pub enum MicrioError {
         crate_version: String,
         error_msg: String,
     },
+    FeatureNotFound {
+        crate_name: String,
+        crate_version: String,
+        feature_name: String,
+    }
 }
 
 impl Display for MicrioError {
@@ -73,6 +78,9 @@ impl Display for MicrioError {
             MicrioError::FeatureTable { crate_name, crate_version, error_msg } => {
                 write!(f, "feature table error with {} version {}: {}", crate_name, crate_version, error_msg)
             },
+            MicrioError::FeatureNotFound { crate_name, crate_version, feature_name } => {
+                write!(f, "feature {} not found in version {} of {}", feature_name, crate_name, crate_version)
+            },
         }
     }
 }
@@ -87,6 +95,7 @@ impl std::error::Error for MicrioError {
             MicrioError::SemVerVersion { crate_name, crate_version, error } => Some(error),
             MicrioError::CompatibleCrateNotFound { crate_name, crate_version, dependency_name } => None,
             MicrioError::FeatureTable { crate_name, crate_version, error_msg } => None,
+            MicrioError::FeatureNotFound { crate_name, crate_version, feature_name } => None,
         }
     }
 }

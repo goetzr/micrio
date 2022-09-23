@@ -1,7 +1,8 @@
 use crate::common::{CrateId, MicrioError, Result};
 use crates_index::DependencyKind;
+use log::warn;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     ops::{Deref, DerefMut},
 };
 
@@ -22,11 +23,21 @@ impl<T: Clone> StoredIndexVec<T> {
         }
     }
 
-    fn next_item(&mut self) -> Option<T> {
+    /*fn next_item(&mut self) -> Option<T> {
         if self.index < self.items.len() {
             let next_item = &self.items[self.index];
             self.index += 1;
             Some(next_item.clone())
+        } else {
+            None
+        }
+    }*/
+
+    fn next_item(&mut self) -> Option<&T> {
+        if self.index < self.items.len() {
+            let next_item = &self.items[self.index];
+            self.index += 1;
+            Some(&next_item)
         } else {
             None
         }
@@ -97,7 +108,7 @@ impl SrcIndex {
                         &features_table,
                         &enabled_crate_features,
                         dependency,
-                    );
+                    )?;
                     if let Some(enabled_features) = enabled_features {
                         let dep_crate_version = self.add_dependency(
                             crate_version,
@@ -113,7 +124,7 @@ impl SrcIndex {
                         &features_table,
                         &enabled_crate_features,
                         dependency,
-                    );
+                    )?;
                     let dep_crate_version =
                         self.add_dependency(crate_version, dependency, &mut required_dependencies)?;
                     enabled_dependencies
@@ -148,7 +159,7 @@ impl SrcIndex {
                     &features_table,
                     &enabled_crate_features,
                     dependency,
-                );
+                )?;
                 if let Some(enabled_features) = enabled_features {
                     let dep_crate_version =
                         self.add_dependency(&crate_version, dependency, required_dependencies)?;
@@ -161,7 +172,7 @@ impl SrcIndex {
                     &features_table,
                     &enabled_crate_features,
                     dependency,
-                );
+                )?;
                 let dep_crate_version =
                     self.add_dependency(&crate_version, dependency, required_dependencies)?;
                 enabled_dependencies
@@ -384,7 +395,7 @@ fn get_enabled_features_for_optional_dependency(
     features_table: &HashMap<String, Vec<FeatureTableEntry>>,
     enabled_crate_features: &Vec<String>,
     dependency: &crates_index::Dependency,
-) -> Option<Vec<String>> {
+) -> Result<Option<Vec<String>>> {
     unimplemented!()
 }
 
@@ -393,8 +404,49 @@ fn get_enabled_features_for_dependency(
     features_table: &HashMap<String, Vec<FeatureTableEntry>>,
     enabled_crate_features: &Vec<String>,
     dependency: &crates_index::Dependency,
-) -> Vec<String> {
-    let enabled_features = Vec::new();
-    let features_to_examine = StoredIndexVec::from_iter(enabled_crate_features.iter().cloned());
+) -> Result<Vec<String>> {
+    let mut enabled_features = dependency.features().iter().cloned().collect::<Vec<_>>();
+    let mut features_to_examine = VecDeque::from_iter(enabled_crate_features.iter().cloned());
+
+    while let Some(feature_under_exam) = features_to_examine.pop_front() {
+        let entries =
+            features_table
+                .get(&feature_under_exam)
+                .ok_or(MicrioError::FeatureNotFound {
+                    crate_name: crate_version.name().to_string(),
+                    crate_version: crate_version.version().to_string(),
+                    feature_name: feature_under_exam,
+                })?;
+        for entry in entries {
+            match entry {
+                FeatureTableEntry::Feature(feature) => {
+                    if !features_to_examine.iter().any(|f| f == feature) {
+                        features_to_examine.push_back(feature.clone())
+                    }
+                }
+                FeatureTableEntry::Dependency(dep_name) if dep_name == dependency.name() => {
+                    warn!(
+                        "{} version {}: required dependency {dep_name} found in feature table",
+                        crate_version.name(),
+                        crate_version.version()
+                    );
+                }
+                FeatureTableEntry::StrongDependencyFeature { dep_name, feature }
+                    if dep_name == dependency.name() =>
+                {
+                    if !enabled_features.iter().any(|f| f == feature) {
+                        enabled_features.push(feature.clone())
+                    }
+                }
+                FeatureTableEntry::WeakDependencyFeature { dep_name, feature }
+                    if dep_name == dependency.name() =>
+                {
+                    warn!("{} version {}: weak dependency {dep_name}?/{feature} found in feature table for required dependency {}", crate_version.name(), crate_version.version(), dependency.name());
+                }
+                _ => (),
+            }
+        }
+    }
+
     Ok(enabled_features)
 }
