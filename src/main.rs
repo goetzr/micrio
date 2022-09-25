@@ -7,6 +7,7 @@ use log::error;
 use src_registry::SrcIndex;
 
 fn try_main() -> anyhow::Result<()> {
+    env_logger::init();
     let src_index = SrcIndex::new()?;
     let crate_ids = Vec::<CrateId>::new();
     let dep_crate_ids = src_index.get_required_dependencies(&crate_ids)?;

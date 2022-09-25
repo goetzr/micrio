@@ -1,0 +1,6 @@
+- Check dependency.has_default_features()
+- Check crate_version.yanked()
+- Check dependency.name() vs dependency.package()
+
+- Running tests:
+      $env:RUST_LOG = "trace"; cargo test -- --nocapture

@@ -527,6 +527,7 @@ mod test {
 
     #[test]
     fn test1() {
+        env_logger::init();
         let src_index = SrcIndex::new().expect("failed to create source index");
         let crate_ids = vec![CrateId::new("either", "1.8.0")];
         let required_dependencies = src_index
