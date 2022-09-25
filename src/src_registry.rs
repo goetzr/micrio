@@ -446,3 +446,22 @@ fn get_enabled_features_for_dependency(
 
     Ok(enabled_features)
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test1() {
+        // ********************** TODO: ADD TRACING ****************************************
+        let src_index = SrcIndex::new().expect("failed to create source index");
+        let crate_ids = vec![CrateId::new("either", "1.8.0")];
+        let required_dependencies = src_index.get_required_dependencies(&crate_ids).expect("failed to get required dependencies");
+        for dep_crate_id in &required_dependencies {
+            println!(
+                "Required dependency: {} version {}",
+                dep_crate_id.name, dep_crate_id.version
+            );
+        }
+    }
+}
