@@ -1,18 +1,20 @@
 mod common;
-mod src_registry;
 mod local_registry;
+mod src_registry;
 
-use anyhow::Context;
 use common::CrateId;
-use src_registry::SrcIndex;
 use log::error;
+use src_registry::SrcIndex;
 
 fn try_main() -> anyhow::Result<()> {
-    let mut src_index = SrcIndex::new()?;
+    let src_index = SrcIndex::new()?;
     let crate_ids = Vec::<CrateId>::new();
     let dep_crate_ids = src_index.get_required_dependencies(&crate_ids)?;
     for dep_crate_id in &dep_crate_ids {
-        println!("Dependent crate: {} version {}", dep_crate_id.name, dep_crate_id.version);
+        println!(
+            "Dependent crate: {} version {}",
+            dep_crate_id.name, dep_crate_id.version
+        );
     }
     Ok(())
 }

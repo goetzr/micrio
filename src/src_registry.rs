@@ -1,69 +1,7 @@
 use crate::common::{CrateId, MicrioError, Result};
 use crates_index::DependencyKind;
 use log::warn;
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    ops::{Deref, DerefMut},
-};
-
-pub struct SrcIndex {
-    index: crates_index::Index,
-}
-
-struct StoredIndexVec<T> {
-    items: Vec<T>,
-    index: usize,
-}
-
-impl<T: Clone> StoredIndexVec<T> {
-    fn new() -> Self {
-        StoredIndexVec {
-            items: Vec::new(),
-            index: 0,
-        }
-    }
-
-    /*fn next_item(&mut self) -> Option<T> {
-        if self.index < self.items.len() {
-            let next_item = &self.items[self.index];
-            self.index += 1;
-            Some(next_item.clone())
-        } else {
-            None
-        }
-    }*/
-
-    fn next_item(&mut self) -> Option<&T> {
-        if self.index < self.items.len() {
-            let next_item = &self.items[self.index];
-            self.index += 1;
-            Some(&next_item)
-        } else {
-            None
-        }
-    }
-}
-
-impl<T> Deref for StoredIndexVec<T> {
-    type Target = Vec<T>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.items
-    }
-}
-
-impl<T> DerefMut for StoredIndexVec<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.items
-    }
-}
-
-impl<T> FromIterator<T> for StoredIndexVec<T> {
-    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
-        let items = iter.into_iter().collect::<Vec<_>>();
-        StoredIndexVec { items, index: 0 }
-    }
-}
+use std::collections::{HashMap, HashSet, VecDeque};
 
 struct EnabledDependency {
     crate_version: crates_index::Version,
@@ -77,6 +15,9 @@ impl EnabledDependency {
             enabled_features,
         }
     }
+}
+pub struct SrcIndex {
+    index: crates_index::Index,
 }
 
 impl SrcIndex {
@@ -110,6 +51,7 @@ impl SrcIndex {
                         dependency,
                     )?;
                     if let Some(enabled_features) = enabled_features {
+                        // Optional dependency is enabled.
                         let dep_crate_version = self.add_dependency(
                             crate_version,
                             dependency,
@@ -161,6 +103,7 @@ impl SrcIndex {
                     dependency,
                 )?;
                 if let Some(enabled_features) = enabled_features {
+                    // Optional dependency is enabled.
                     let dep_crate_version =
                         self.add_dependency(&crate_version, dependency, required_dependencies)?;
                     enabled_dependencies
@@ -396,7 +339,60 @@ fn get_enabled_features_for_optional_dependency(
     enabled_crate_features: &Vec<String>,
     dependency: &crates_index::Dependency,
 ) -> Result<Option<Vec<String>>> {
-    unimplemented!()
+    let mut enabled_features = dependency.features().iter().cloned().collect::<Vec<_>>();
+    let mut weakly_enabled_features = Vec::new();
+    let mut features_to_examine = VecDeque::from_iter(enabled_crate_features.iter().cloned());
+    let mut dependency_enabled = false;
+
+    while let Some(feature_under_exam) = features_to_examine.pop_front() {
+        let entries =
+            features_table
+                .get(&feature_under_exam)
+                .ok_or(MicrioError::FeatureNotFound {
+                    crate_name: crate_version.name().to_string(),
+                    crate_version: crate_version.version().to_string(),
+                    feature_name: feature_under_exam,
+                })?;
+        for entry in entries {
+            match entry {
+                FeatureTableEntry::Feature(feature) => {
+                    if !features_to_examine.iter().any(|f| f == feature) {
+                        features_to_examine.push_back(feature.clone())
+                    }
+                }
+                FeatureTableEntry::Dependency(dep_name) if dep_name == dependency.name() => {
+                    dependency_enabled = true
+                }
+                FeatureTableEntry::StrongDependencyFeature { dep_name, feature }
+                    if dep_name == dependency.name() =>
+                {
+                    dependency_enabled = true;
+                    if !enabled_features.iter().any(|f| f == feature) {
+                        enabled_features.push(feature.clone())
+                    }
+                }
+                FeatureTableEntry::WeakDependencyFeature { dep_name, feature }
+                    if dep_name == dependency.name() =>
+                {
+                    if !weakly_enabled_features.iter().any(|f| f == feature) {
+                        weakly_enabled_features.push(feature.clone());
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
+
+    if dependency_enabled {
+        for weak_feature in weakly_enabled_features {
+            if !enabled_features.iter().any(|f| f == &weak_feature) {
+                enabled_features.push(weak_feature);
+            }
+        }
+        Ok(Some(enabled_features))
+    } else {
+        Ok(None)
+    }
 }
 
 fn get_enabled_features_for_dependency(
