@@ -3,6 +3,9 @@ use semver;
 use std::fmt;
 use std::fmt::Display;
 
+pub const TARGET_TRIPLE: &'static str = "x86_64-pc-windows-msvc";
+pub const DEFAULT_FEATURE: &'static str = "default";
+
 #[derive(PartialEq, Eq, Hash, Clone)]
 pub struct CrateId {
     pub name: String,
@@ -21,6 +24,13 @@ impl CrateId {
 #[derive(Debug)]
 pub enum MicrioError {
     SrcRegistry(crates_index::Error),
+    TargetNotFound,
+    ConfigExpression {
+        crate_name: String,
+        crate_version: String,
+        dependency_name: String,
+        error: cfg_expr::ParseError,
+    },
     CrateNotFound {
         crate_name: String,
     },
@@ -60,6 +70,15 @@ impl Display for MicrioError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             MicrioError::SrcRegistry(e) => write!(f, "source registry error: {}", e),
+            MicrioError::TargetNotFound => write!(f, "target triple {} not found", TARGET_TRIPLE),
+            MicrioError::ConfigExpression {
+                crate_name,
+                crate_version,
+                dependency_name,
+                error,
+            } => {
+                write!(f, "error parsing target config expression for the {} dependency of {} version {}: {}", dependency_name, crate_name, crate_version, error)
+            }
             MicrioError::CrateNotFound { crate_name } => {
                 write!(f, "{} not found in the source registry", crate_name)
             }
@@ -133,6 +152,8 @@ impl std::error::Error for MicrioError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             MicrioError::SrcRegistry(e) => Some(e),
+            MicrioError::TargetNotFound => None,
+            MicrioError::ConfigExpression { error, .. } => Some(error),
             MicrioError::CrateNotFound { .. } => None,
             MicrioError::CrateVersionNotFound { .. } => None,
             MicrioError::SemVerRequirement { error, .. } => Some(error),

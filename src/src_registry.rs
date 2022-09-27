@@ -1,4 +1,5 @@
-use crate::common::{CrateId, MicrioError, Result};
+use crate::common::{self, CrateId, MicrioError, Result};
+use cfg_expr::{targets::get_builtin_target_by_triple, targets::TargetInfo, Expression, Predicate};
 use crates_index::DependencyKind;
 use log::{trace, warn};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -6,24 +7,33 @@ use std::collections::{HashMap, HashSet, VecDeque};
 struct EnabledDependency {
     crate_version: crates_index::Version,
     enabled_features: Vec<String>,
+    has_default_features: bool,
 }
 
 impl EnabledDependency {
-    fn new(crate_version: crates_index::Version, enabled_features: Vec<String>) -> Self {
+    fn new(
+        crate_version: crates_index::Version,
+        enabled_features: Vec<String>,
+        has_default_features: bool,
+    ) -> Self {
         EnabledDependency {
             crate_version,
             enabled_features,
+            has_default_features,
         }
     }
 }
 pub struct SrcIndex {
     index: crates_index::Index,
+    target: &'static TargetInfo,
 }
 
 impl SrcIndex {
     pub fn new() -> Result<Self> {
         let index = crates_index::Index::new_cargo_default()?;
-        Ok(SrcIndex { index })
+        let target = get_builtin_target_by_triple(common::TARGET_TRIPLE)
+            .ok_or(MicrioError::TargetNotFound)?;
+        Ok(SrcIndex { index, target })
     }
 
     pub fn get_required_dependencies(&self, crate_ids: &Vec<CrateId>) -> Result<HashSet<CrateId>> {
@@ -54,12 +64,16 @@ impl SrcIndex {
                 .iter()
                 .filter(|d| d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
             {
+                if !self.dependency_enabled_for_target(crate_version, dependency)? {
+                    continue;
+                }
                 if dependency.is_optional() {
                     let enabled_features = get_enabled_features_for_optional_dependency(
                         crate_version,
                         &features_table,
                         &enabled_crate_features,
                         dependency,
+                        true, // Force-enable all optional dependencies for top-level crates.
                     )?;
                     if let Some(enabled_features) = enabled_features {
                         // Optional dependency is enabled.
@@ -75,15 +89,11 @@ impl SrcIndex {
                             dependency,
                             &mut required_dependencies,
                         )?;
-                        enabled_dependencies
-                            .push(EnabledDependency::new(dep_crate_version, enabled_features));
-                    } else {
-                        trace!(
-                            "{} version {}: optional dependency {} not enabled",
-                            crate_id.name,
-                            crate_id.version,
-                            dependency.name()
-                        );
+                        enabled_dependencies.push(EnabledDependency::new(
+                            dep_crate_version,
+                            enabled_features,
+                            dependency.has_default_features(),
+                        ));
                     }
                 } else {
                     let enabled_features = get_enabled_features_for_dependency(
@@ -101,15 +111,19 @@ impl SrcIndex {
                     );
                     let dep_crate_version =
                         self.add_dependency(crate_version, dependency, &mut required_dependencies)?;
-                    enabled_dependencies
-                        .push(EnabledDependency::new(dep_crate_version, enabled_features));
+                    enabled_dependencies.push(EnabledDependency::new(
+                        dep_crate_version,
+                        enabled_features,
+                        dependency.has_default_features(),
+                    ));
                 }
-                trace!(
-                    "{} version {}: (END) getting required dependencies",
-                    crate_id.name,
-                    crate_id.version
-                );
             }
+
+            trace!(
+                "{} version {}: (END) getting required dependencies",
+                crate_id.name,
+                crate_id.version
+            );
 
             for enabled_dependency in enabled_dependencies {
                 self.process_enabled_dependency(enabled_dependency, &mut required_dependencies)?;
@@ -129,7 +143,17 @@ impl SrcIndex {
             crate_version.name(),
             crate_version.version()
         );
-        let enabled_crate_features = enabled_dependency.enabled_features;
+        let mut enabled_crate_features = enabled_dependency.enabled_features;
+        if enabled_dependency.has_default_features
+            && crate_version
+                .features()
+                .contains_key(common::DEFAULT_FEATURE)
+            && !enabled_crate_features
+                .iter()
+                .any(|f| f == common::DEFAULT_FEATURE)
+        {
+            enabled_crate_features.push(common::DEFAULT_FEATURE.to_string());
+        }
         trace!(
             "{} version {}: enabled features: {}",
             crate_version.name(),
@@ -143,12 +167,16 @@ impl SrcIndex {
             .iter()
             .filter(|d| d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
         {
+            if !self.dependency_enabled_for_target(&crate_version, dependency)? {
+                continue;
+            }
             if dependency.is_optional() {
                 let enabled_features = get_enabled_features_for_optional_dependency(
                     &crate_version,
                     &features_table,
                     &enabled_crate_features,
                     dependency,
+                    false,
                 )?;
                 if let Some(enabled_features) = enabled_features {
                     // Optional dependency is enabled.
@@ -161,15 +189,11 @@ impl SrcIndex {
                     );
                     let dep_crate_version =
                         self.add_dependency(&crate_version, dependency, required_dependencies)?;
-                    enabled_dependencies
-                        .push(EnabledDependency::new(dep_crate_version, enabled_features));
-                } else {
-                    trace!(
-                        "{} version {}: optional dependency {} not enabled",
-                        crate_version.name(),
-                        crate_version.version(),
-                        dependency.name()
-                    );
+                    enabled_dependencies.push(EnabledDependency::new(
+                        dep_crate_version,
+                        enabled_features,
+                        dependency.has_default_features(),
+                    ));
                 }
             } else {
                 let enabled_features = get_enabled_features_for_dependency(
@@ -187,8 +211,11 @@ impl SrcIndex {
                 );
                 let dep_crate_version =
                     self.add_dependency(&crate_version, dependency, required_dependencies)?;
-                enabled_dependencies
-                    .push(EnabledDependency::new(dep_crate_version, enabled_features));
+                enabled_dependencies.push(EnabledDependency::new(
+                    dep_crate_version,
+                    enabled_features,
+                    dependency.has_default_features(),
+                ));
             }
         }
 
@@ -217,19 +244,12 @@ impl SrcIndex {
         crat.versions()
             .iter()
             .rev()
+            .filter(|c| !c.is_yanked())
             .find(|v| v.version() == version)
             .ok_or(MicrioError::CrateVersionNotFound {
                 crate_name: crat.name().to_string(),
                 crate_version: version.to_string(),
             })
-    }
-
-    fn get_dependency_crate(
-        &self,
-        dependency: &crates_index::Dependency,
-    ) -> Result<crates_index::Crate> {
-        let dep_crate_name = get_dependency_crate_name(dependency);
-        self.get_crate(dep_crate_name)
     }
 
     fn get_dependency_crate_version<'a>(
@@ -246,7 +266,7 @@ impl SrcIndex {
                 error: e,
             }
         })?;
-        for dep_crate_version in dep_crate.versions().iter().rev() {
+        for dep_crate_version in dep_crate.versions().iter().rev().filter(|c| !c.is_yanked()) {
             let version_str = dep_crate_version.version();
             let version =
                 semver::Version::parse(version_str).map_err(|e| MicrioError::SemVerVersion {
@@ -271,12 +291,39 @@ impl SrcIndex {
         dependency: &crates_index::Dependency,
         required_dependencies: &mut HashSet<CrateId>,
     ) -> Result<crates_index::Version> {
-        let dep_crate = self.get_dependency_crate(dependency)?;
+        let dep_crate = self.get_crate(dependency.crate_name())?;
         let dep_crate_version =
             self.get_dependency_crate_version(crate_version, dependency, &dep_crate)?;
         let dep_crate_id = CrateId::new(dep_crate.name(), dep_crate_version.version());
         required_dependencies.insert(dep_crate_id);
         Ok(dep_crate_version.clone())
+    }
+
+    fn dependency_enabled_for_target(
+        &self,
+        crate_version: &crates_index::Version,
+        dependency: &crates_index::Dependency,
+    ) -> Result<bool> {
+        match dependency.target() {
+            Some(expr_str) => {
+                let expr =
+                    Expression::parse(expr_str).map_err(|e| MicrioError::ConfigExpression {
+                        crate_name: crate_version.name().to_string(),
+                        crate_version: crate_version.version().to_string(),
+                        dependency_name: dependency.name().to_string(),
+                        error: e,
+                    })?;
+                let result = expr.eval(|pred| match pred {
+                    Predicate::Target(tp) => Some(tp.matches(self.target)),
+                    _ => None,
+                });
+                match result {
+                    Some(result) => Ok(result),
+                    None => Ok(true),
+                }
+            }
+            None => Ok(true),
+        }
     }
 }
 
@@ -287,7 +334,7 @@ enum FeatureTableEntry {
     StrongDependencyFeature { dep_name: String, feature: String },
 }
 
-fn parse_features_table(
+fn  parse_features_table(
     crate_version: &crates_index::Version,
 ) -> Result<HashMap<String, Vec<FeatureTableEntry>>> {
     let mut parsed_features_table = HashMap::new();
@@ -399,24 +446,17 @@ fn is_dependency_of(name: &str, crate_version: &crates_index::Version) -> bool {
         .is_some()
 }
 
-fn get_dependency_crate_name(dependency: &crates_index::Dependency) -> &str {
-    if let Some(name) = dependency.package() {
-        name
-    } else {
-        dependency.name()
-    }
-}
-
 fn get_enabled_features_for_optional_dependency(
     crate_version: &crates_index::Version,
     features_table: &HashMap<String, Vec<FeatureTableEntry>>,
     enabled_crate_features: &Vec<String>,
     dependency: &crates_index::Dependency,
+    force_enable: bool,
 ) -> Result<Option<Vec<String>>> {
     let mut enabled_features = dependency.features().iter().cloned().collect::<Vec<_>>();
     let mut weakly_enabled_features = Vec::new();
     let mut features_to_examine = VecDeque::from_iter(enabled_crate_features.iter().cloned());
-    let mut dependency_enabled = false;
+    let mut dependency_enabled = force_enable;
 
     while let Some(feature_under_exam) = features_to_examine.pop_front() {
         let entries =
@@ -529,7 +569,7 @@ mod test {
     fn test1() {
         env_logger::init();
         let src_index = SrcIndex::new().expect("failed to create source index");
-        let crate_ids = vec![CrateId::new("either", "1.8.0")];
+        let crate_ids = vec![CrateId::new("indexmap", "1.9.1")];
         let required_dependencies = src_index
             .get_required_dependencies(&crate_ids)
             .expect("failed to get required dependencies");
