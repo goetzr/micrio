@@ -334,7 +334,7 @@ enum FeatureTableEntry {
     StrongDependencyFeature { dep_name: String, feature: String },
 }
 
-fn  parse_features_table(
+fn parse_features_table(
     crate_version: &crates_index::Version,
 ) -> Result<HashMap<String, Vec<FeatureTableEntry>>> {
     let mut parsed_features_table = HashMap::new();
@@ -354,74 +354,105 @@ fn parse_feature_table_entry(
     feature: &String,
     entry: &String,
 ) -> Result<FeatureTableEntry> {
+    // Possibilities:
+    //   feat_name
+    //   dep_name (optional dependency)
+    //   dep_name/feat_name (optional or required dependency)
+    //   dep_name?/feat_name (optional dependency)
+    //   dep:dep_name (optional dependency)
+    //   dep:dep_name/feat_name (optional dependency)
+    //   dep:dep_name?/feat_name (optional dependency)
     let parts = entry.split("/").collect::<Vec<_>>();
     match parts.len() {
-        1 => {
-            let name = parts[0];
-            if is_feature_of(name, crate_version) {
-                Ok(FeatureTableEntry::Feature(name.to_string()))
-            } else if is_optional_dependency_of(name, crate_version) {
-                Ok(FeatureTableEntry::Dependency(name.to_string()))
-            } else {
-                Err(MicrioError::FeatureTable {
-                    crate_name: crate_version.name().to_string(),
-                    crate_version: crate_version.version().to_string(),
-                    error_msg: format!("entry '{entry}' in feature '{feature}': '{entry}' not a feature or an optional dependency")
-                })
-            }
-        }
-        2 => {
-            // This should be a feature of the dependency, not the current crate.
-            // Delay checking this until later.
-            let feat_name = parts[1];
-
-            let (dep_name, is_weak) = match parts[0].find("?") {
-                None => (parts[0], false),
-                Some(idx) => {
-                    if idx == parts[0].len() - 1 {
-                        // Trim off the trailing '?'.
-                        (&parts[0][..parts[0].len() - 1], true)
-                    } else {
-                        return Err(MicrioError::FeatureTable {
-                            crate_name: crate_version.name().to_string(),
-                            crate_version: crate_version.version().to_string(),
-                            error_msg: format!("entry '{entry}' in feature '{feature}': '?' not at end of dependency name")
-                        });
-                    }
-                }
-            };
-
-            if is_weak {
-                if !is_optional_dependency_of(dep_name, crate_version) {
-                    return Err(MicrioError::FeatureTable {
-                        crate_name: crate_version.name().to_string(),
-                        crate_version: crate_version.version().to_string(),
-                        error_msg: format!("entry '{entry}' in feature '{feature}': name before '/' not an optional dependency")
-                    });
-                }
-                Ok(FeatureTableEntry::WeakDependencyFeature {
-                    dep_name: dep_name.to_string(),
-                    feature: feat_name.to_string(),
-                })
-            } else {
-                if !is_dependency_of(dep_name, crate_version) {
-                    return Err(MicrioError::FeatureTable {
-                        crate_name: crate_version.name().to_string(),
-                        crate_version: crate_version.version().to_string(),
-                        error_msg: format!("entry '{entry}' in feature '{feature}': name before '/' not a dependency")
-                    });
-                }
-                Ok(FeatureTableEntry::StrongDependencyFeature {
-                    dep_name: dep_name.to_string(),
-                    feature: feat_name.to_string(),
-                })
-            }
-        }
+        1 => parse_feature_or_dependency_entry(crate_version, feature, entry),
+        2 => parse_dependency_feature_entry(crate_version, feature, entry, parts[0], parts[1]),
         _ => Err(MicrioError::FeatureTable {
             crate_name: crate_version.name().to_string(),
             crate_version: crate_version.version().to_string(),
             error_msg: format!("entry '{entry}' in feature '{feature}': multiple '/' separators"),
         }),
+    }
+}
+
+fn parse_feature_or_dependency_entry(
+    crate_version: &crates_index::Version,
+    feature: &String,
+    entry: &String,
+) -> Result<FeatureTableEntry> {
+    // Possibilities:
+    //   feat_name
+    //   dep_name (optional dependency)
+    //   dep:dep_name (optional dependency)
+    if let Some(dep_name) = entry.strip_prefix("dep:") {
+        if is_optional_dependency_of(dep_name, crate_version) {
+            Ok(FeatureTableEntry::Dependency(dep_name.to_string()))
+        } else {
+            Err(MicrioError::FeatureTable {
+                crate_name: crate_version.name().to_string(),
+                crate_version: crate_version.version().to_string(),
+                error_msg: format!("entry '{entry}' in feature '{feature}': name after 'dep:' not an optional dependency")
+            })
+        }
+    } else {
+        if is_feature_of(entry, crate_version) {
+            Ok(FeatureTableEntry::Feature(entry.to_string()))
+        } else if is_optional_dependency_of(entry, crate_version) {
+            Ok(FeatureTableEntry::Dependency(entry.to_string()))
+        } else {
+            Err(MicrioError::FeatureTable {
+                crate_name: crate_version.name().to_string(),
+                crate_version: crate_version.version().to_string(),
+                error_msg: format!("entry '{entry}' in feature '{feature}': '{entry}' not a feature or an optional dependency")
+            })
+        }
+    }
+}
+
+fn parse_dependency_feature_entry(
+    crate_version: &crates_index::Version,
+    feature: &String,
+    entry: &String,
+    dep_name: &str,
+    dep_feat_name: &str,
+) -> Result<FeatureTableEntry> {
+    // Possibilities:
+    //   dep_name/feat_name (optional or required dependency)
+    //   dep_name?/feat_name (optional dependency)
+    //   dep:dep_name/feat_name (optional dependency)
+    //   dep:dep_name?/feat_name (optional dependency)
+    let mut dep_name = dep_name;
+    if let Some(stripped) = dep_name.strip_prefix("dep:") {
+        dep_name = stripped;
+    }
+
+    if let Some(dep_name) = dep_name.strip_suffix("?") {
+        if is_optional_dependency_of(dep_name, crate_version) {
+            Ok(FeatureTableEntry::WeakDependencyFeature {
+                dep_name: dep_name.to_string(),
+                feature: dep_feat_name.to_string(),
+            })
+        } else {
+            Err(MicrioError::FeatureTable {
+                crate_name: crate_version.name().to_string(),
+                crate_version: crate_version.version().to_string(),
+                error_msg: format!("entry '{entry}' in feature '{feature}': name before '/' not an optional dependency")
+            })
+        }
+    } else {
+        if is_dependency_of(dep_name, crate_version) {
+            Ok(FeatureTableEntry::StrongDependencyFeature {
+                dep_name: dep_name.to_string(),
+                feature: dep_feat_name.to_string(),
+            })
+        } else {
+            Err(MicrioError::FeatureTable {
+                crate_name: crate_version.name().to_string(),
+                crate_version: crate_version.version().to_string(),
+                error_msg: format!(
+                    "entry '{entry}' in feature '{feature}': name before '/' not a dependency"
+                ),
+            })
+        }
     }
 }
 
