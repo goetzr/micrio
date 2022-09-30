@@ -54,23 +54,37 @@ impl CrateVersion for crates_index::Version {
         self.version()
     }
 
-    fn dependencies(&self) -> &[&dyn Dependency] {
-        
+    fn dependencies(&self) -> Vec<&dyn Dependency> {
+        self.dependencies().iter().map(|d| d as &dyn Dependency).collect::<Vec<_>>()
     }
 
-    fn features(&self) -> HashMap<String, Vec<String>> {
+    fn features(&self) -> &HashMap<String, Vec<String>> {
         self.features()
+    }
+
+    fn is_yanked(&self) -> bool {
+        self.is_yanked()
+    }
+    
+    fn clone(&self) -> Box<dyn CrateVersion> {
+        Box::new(Clone::clone(self))
     }
 }
 
 impl Crate for crates_index::Crate {
-    fn versions(&self) -> &[&dyn CrateVersion];
+    fn name(&self) -> &str {
+        self.name()
+    }
+
+    fn versions(&self) -> Vec<&dyn CrateVersion> {
+        self.versions().iter().map(|v| v as &dyn CrateVersion).collect::<Vec<_>>()
+    }
 }
 
 impl Index for crates_index::Index {
-    fn get_crate(&self, name: &'static str) -> Option<Box<dyn Crate>> {
+    fn get_crate(&self, name: &str) -> Option<Box<dyn Crate>> {
         match self.crate_(name) {
-            Some(crat) => Box::new(crat),
+            Some(crat) => Some(Box::new(crat)),
             None => None,
         }
     }
@@ -79,7 +93,7 @@ impl Index for crates_index::Index {
 fn try_main() -> anyhow::Result<()> {
     env_logger::init();
     let index = crates_index::Index::new_cargo_default()?;
-    let src_index = SourceIndex::new()?;
+    let src_index = SourceIndex::new(&index)?;
     let crate_ids = Vec::<CrateId>::new();
     let dep_crate_ids = src_index.get_required_dependencies(&crate_ids)?;
     for dep_crate_id in &dep_crate_ids {
