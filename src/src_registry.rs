@@ -3,6 +3,9 @@ use cfg_expr::{targets::get_builtin_target_by_triple, targets::TargetInfo, Expre
 use log::{trace, warn};
 use std::collections::{HashMap, HashSet, VecDeque};
 
+#[cfg(test)]
+use mockall::*;
+
 struct EnabledDependency {
     crate_version: Box<dyn CrateVersion>,
     enabled_features: Vec<String>,
@@ -30,30 +33,35 @@ pub enum DependencyKind {
     Dev,
 }
 
+#[cfg_attr(test, automock)]
 pub trait Dependency {
     fn name(&self) -> &str;
     fn requirement(&self) -> &str;
     fn features(&self) -> &[String];
     fn is_optional(&self) -> bool;
     fn has_default_features(&self) -> bool;
-    fn target(&self) -> Option<&str>;
+    fn target<'a>(&'a self) -> Option<&'a str>;
     fn kind(&self) -> DependencyKind;
     fn crate_name(&self) -> &str;
 }
 
+#[cfg_attr(test, automock)]
 pub trait CrateVersion {
     fn name(&self) -> &str;
     fn version(&self) -> &str;
-    fn dependencies(&self) -> Vec<&dyn Dependency>;
+    fn dependencies<'a>(&'a self) -> Vec<&'a dyn Dependency>;
     fn features(&self) -> &HashMap<String, Vec<String>>;
     fn is_yanked(&self) -> bool;
     fn clone(&self) -> Box<dyn CrateVersion>;
 }
 
+#[cfg_attr(test, automock)]
 pub trait Crate {
     fn name(&self) -> &str;
-    fn versions(&self) -> Vec<&dyn CrateVersion>;
+    fn versions<'a>(&'a self) -> Vec<&'a dyn CrateVersion>;
 }
+
+#[cfg_attr(test, automock)]
 pub trait Index {
     fn get_crate(&self, name: &str) -> Option<Box<dyn Crate>>;
 }
@@ -629,21 +637,33 @@ fn get_enabled_features_for_dependency(
 #[cfg(test)]
 mod test {
     use super::*;
+    use mockall::predicate::*;
 
     #[test]
-    fn test1() {
-        env_logger::init();
-        let index = crates_index::Index::new_cargo_default().expect("failed to create crates index");
+    fn get_crate_method_crate_found() {
+        const CRATE_NAME: &str = "crate1";
+
+        let crat = MockCrate::new();
+
+        let mut index = MockIndex::new();
+        index.expect_get_crate()
+            .with(predicate::eq(CRATE_NAME))
+            .return_once(|_| Some(Box::new(crat)));
         let src_index = SourceIndex::new(&index).expect("failed to create source index");
-        let crate_ids = vec![CrateId::new("indexmap", "1.9.1")];
-        let required_dependencies = src_index
-            .get_required_dependencies(&crate_ids)
-            .expect("failed to get required dependencies");
-        for dep_crate_id in &required_dependencies {
-            println!(
-                "Required dependency: {} version {}",
-                dep_crate_id.name, dep_crate_id.version
-            );
-        }
+        assert!(src_index.get_crate(CRATE_NAME).is_ok())
+    }
+
+    #[test]
+    fn get_crate_method_crate_not_found() {
+        const CRATE_NAME: &str = "crate1";
+
+        let crat = MockCrate::new();
+
+        let mut index = MockIndex::new();
+        index.expect_get_crate()
+            .with(predicate::eq(CRATE_NAME))
+            .returning(|_| None);
+        let src_index = SourceIndex::new(&index).expect("failed to create source index");
+        assert!(src_index.get_crate(CRATE_NAME).is_err())
     }
 }
