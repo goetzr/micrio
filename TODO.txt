@@ -1,2 +1,4 @@
+- Look at is_yanked flag of Version.
+
 - Running tests:
       $env:RUST_LOG = "trace"; cargo test -- --nocapture

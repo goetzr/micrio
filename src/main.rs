@@ -4,11 +4,82 @@ mod src_registry;
 
 use common::CrateId;
 use log::error;
-use src_registry::SrcIndex;
+use src_registry::{SourceIndex, Index, Crate, CrateVersion, Dependency, DependencyKind};
+use std::collections::HashMap;
+
+impl Dependency for crates_index::Dependency {
+    fn name(&self) -> &str {
+        self.name()
+    }
+
+    fn requirement(&self) -> &str {
+        self.requirement()
+    }
+
+    fn features(&self) -> &[String] {
+        self.features()
+    }
+
+    fn is_optional(&self) -> bool {
+        self.is_optional()
+    }
+
+    fn has_default_features(&self) -> bool {
+        self.has_default_features()
+    }
+
+    fn target(&self) -> Option<&str> {
+        self.target()
+    }
+
+    fn kind(&self) -> DependencyKind {
+        match self.kind() {
+            crates_index::DependencyKind::Normal => DependencyKind::Normal,
+            crates_index::DependencyKind::Build => DependencyKind::Build,
+            crates_index::DependencyKind::Dev => DependencyKind::Dev,
+        }
+    }
+
+    fn crate_name(&self) -> &str {
+        self.crate_name()
+    }
+}
+
+impl CrateVersion for crates_index::Version {
+    fn name(&self) -> &str {
+        self.name()
+    }
+
+    fn version(&self) -> &str {
+        self.version()
+    }
+
+    fn dependencies(&self) -> &[&dyn Dependency] {
+        
+    }
+
+    fn features(&self) -> HashMap<String, Vec<String>> {
+        self.features()
+    }
+}
+
+impl Crate for crates_index::Crate {
+    fn versions(&self) -> &[&dyn CrateVersion];
+}
+
+impl Index for crates_index::Index {
+    fn get_crate(&self, name: &'static str) -> Option<Box<dyn Crate>> {
+        match self.crate_(name) {
+            Some(crat) => Box::new(crat),
+            None => None,
+        }
+    }
+}
 
 fn try_main() -> anyhow::Result<()> {
     env_logger::init();
-    let src_index = SrcIndex::new()?;
+    let index = crates_index::Index::new_cargo_default()?;
+    let src_index = SourceIndex::new()?;
     let crate_ids = Vec::<CrateId>::new();
     let dep_crate_ids = src_index.get_required_dependencies(&crate_ids)?;
     for dep_crate_id in &dep_crate_ids {

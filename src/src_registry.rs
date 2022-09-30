@@ -1,6 +1,5 @@
 use crate::common::{self, CrateId, MicrioError, Result};
 use cfg_expr::{targets::get_builtin_target_by_triple, targets::TargetInfo, Expression, Predicate};
-use crates_index::DependencyKind;
 use log::{trace, warn};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -23,14 +22,46 @@ impl EnabledDependency {
         }
     }
 }
-pub struct SrcIndex {
-    index: crates_index::Index,
+
+pub enum DependencyKind {
+    Normal,
+    Build,
+    Dev,
+}
+
+pub trait Dependency {
+    fn name(&self) -> &str;
+    fn requirement(&self) -> &str;
+    fn features(&self) -> &[String];
+    fn is_optional(&self) -> bool;
+    fn has_default_features(&self) -> bool;
+    fn target(&self) -> Option<&str>;
+    fn kind(&self) -> DependencyKind;
+    fn crate_name(&self) -> &str;
+}
+
+pub trait CrateVersion {
+    fn name(&self) -> &str;
+    fn version(&self) -> &str;
+    fn dependencies(&self) -> &[&dyn Dependency];
+    fn features(&self) -> HashMap<String, Vec<String>>;
+}
+
+pub trait Crate {
+    fn versions(&self) -> &[&dyn CrateVersion];
+}
+pub trait Index {
+    fn get_crate(&self, name: &'static str) -> Option<Box<dyn Crate>>;
+}
+
+pub struct SourceIndex {
+    index: &dyn Index,
     target: &'static TargetInfo,
 }
 
-impl SrcIndex {
-    pub fn new() -> Result<Self> {
-        let index = crates_index::Index::new_cargo_default()?;
+impl SourceIndex {
+    pub fn new(&dyn Index) -> Result<Self> {
+        
         let target = get_builtin_target_by_triple(common::TARGET_TRIPLE)
             .ok_or(MicrioError::TargetNotFound)?;
         Ok(SrcIndex { index, target })
