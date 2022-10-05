@@ -144,15 +144,23 @@ impl SrcIndex {
             crate_version.version()
         );
         let mut enabled_crate_features = enabled_dependency.enabled_features;
-        if enabled_dependency.has_default_features
-            && crate_version
+        if enabled_dependency.has_default_features {
+            if crate_version
                 .features()
                 .contains_key(common::DEFAULT_FEATURE)
-            && !enabled_crate_features
+                && !enabled_crate_features
+                    .iter()
+                    .any(|f| f == common::DEFAULT_FEATURE)
+            {
+                enabled_crate_features.push(common::DEFAULT_FEATURE.to_string());
+            }
+        } else {
+            let idx_default = enabled_crate_features
                 .iter()
-                .any(|f| f == common::DEFAULT_FEATURE)
-        {
-            enabled_crate_features.push(common::DEFAULT_FEATURE.to_string());
+                .position(|f| f == common::DEFAULT_FEATURE);
+            if let Some(idx) = idx_default {
+                enabled_crate_features.swap_remove(idx);
+            }
         }
         trace!(
             "{} version {}: enabled features: {}",
@@ -241,15 +249,23 @@ impl SrcIndex {
         crat: &'a crates_index::Crate,
         version: &str,
     ) -> Result<&'a crates_index::Version> {
-        crat.versions()
+        let crate_version = crat
+            .versions()
             .iter()
             .rev()
-            .filter(|c| !c.is_yanked())
             .find(|v| v.version() == version)
             .ok_or(MicrioError::CrateVersionNotFound {
                 crate_name: crat.name().to_string(),
                 crate_version: version.to_string(),
+            })?;
+        if crate_version.is_yanked() {
+            Err(MicrioError::CrateVersionYanked {
+                crate_name: crat.name().to_string(),
+                crate_version: version.to_string(),
             })
+        } else {
+            Ok(crate_version)
+        }
     }
 
     fn get_dependency_crate_version<'a>(

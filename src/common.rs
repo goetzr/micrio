@@ -38,6 +38,10 @@ pub enum MicrioError {
         crate_name: String,
         crate_version: String,
     },
+    CrateVersionYanked {
+        crate_name: String,
+        crate_version: String,
+    },
     SemVerRequirement {
         crate_name: String,
         crate_version: String,
@@ -89,6 +93,16 @@ impl Display for MicrioError {
                 write!(
                     f,
                     "version {} of {} not found in the source registry",
+                    crate_name, crate_version
+                )
+            }
+            MicrioError::CrateVersionYanked {
+                crate_name,
+                crate_version,
+            } => {
+                write!(
+                    f,
+                    "version {} of {} is marked as yanked in the source registry",
                     crate_name, crate_version
                 )
             }
@@ -156,6 +170,7 @@ impl std::error::Error for MicrioError {
             MicrioError::ConfigExpression { error, .. } => Some(error),
             MicrioError::CrateNotFound { .. } => None,
             MicrioError::CrateVersionNotFound { .. } => None,
+            MicrioError::CrateVersionYanked { .. } => None,
             MicrioError::SemVerRequirement { error, .. } => Some(error),
             MicrioError::SemVerVersion { error, .. } => Some(error),
             MicrioError::CompatibleCrateNotFound { .. } => None,
