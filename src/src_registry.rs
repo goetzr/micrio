@@ -229,8 +229,11 @@ impl<'i> SourceIndex<'i> {
                         dependency.name(),
                         &enabled_features.join(",")
                     );
-                    let dep_crate_version =
-                        self.add_dependency(crate_version.as_ref(), dependency, required_dependencies)?;
+                    let dep_crate_version = self.add_dependency(
+                        crate_version.as_ref(),
+                        dependency,
+                        required_dependencies,
+                    )?;
                     enabled_dependencies.push(EnabledDependency::new(
                         dep_crate_version,
                         enabled_features,
@@ -273,9 +276,11 @@ impl<'i> SourceIndex<'i> {
     }
 
     fn get_crate(&self, name: &str) -> Result<Box<dyn Crate>> {
-        self.index.get_crate(name).ok_or(MicrioError::CrateNotFound {
-            crate_name: name.to_string(),
-        })
+        self.index
+            .get_crate(name)
+            .ok_or(MicrioError::CrateNotFound {
+                crate_name: name.to_string(),
+            })
     }
 
     fn get_crate_version<'a>(
@@ -308,7 +313,12 @@ impl<'i> SourceIndex<'i> {
                 error: e,
             }
         })?;
-        for dep_crate_version in dep_crate.versions().into_iter().rev().filter(|c| !c.is_yanked()) {
+        for dep_crate_version in dep_crate
+            .versions()
+            .into_iter()
+            .rev()
+            .filter(|c| !c.is_yanked())
+        {
             let version_str = dep_crate_version.version();
             let version =
                 semver::Version::parse(version_str).map_err(|e| MicrioError::SemVerVersion {
@@ -639,31 +649,87 @@ mod test {
     use super::*;
     use mockall::predicate::*;
 
+    /*pub trait Crate {
+    fn name(&self) -> &str;
+    fn versions<'a>(&'a self) -> Vec<&'a dyn CrateVersion>;
+} */
+    /*mock! {
+        Crate { }
+    }*/
+
     #[test]
-    fn get_crate_method_crate_found() {
+    fn get_crate_found() {
         const CRATE_NAME: &str = "crate1";
 
         let crat = MockCrate::new();
 
         let mut index = MockIndex::new();
-        index.expect_get_crate()
+        index
+            .expect_get_crate()
             .with(predicate::eq(CRATE_NAME))
             .return_once(|_| Some(Box::new(crat)));
-        let src_index = SourceIndex::new(&index).expect("failed to create source index");
+        let src_index = SourceIndex::new(&index).expect("SourceIndex::new");
         assert!(src_index.get_crate(CRATE_NAME).is_ok())
     }
 
     #[test]
-    fn get_crate_method_crate_not_found() {
+    fn get_crate_not_found() {
         const CRATE_NAME: &str = "crate1";
 
         let crat = MockCrate::new();
 
         let mut index = MockIndex::new();
-        index.expect_get_crate()
+        index
+            .expect_get_crate()
             .with(predicate::eq(CRATE_NAME))
             .returning(|_| None);
-        let src_index = SourceIndex::new(&index).expect("failed to create source index");
+        let src_index = SourceIndex::new(&index).expect("SourceIndex::new");
         assert!(src_index.get_crate(CRATE_NAME).is_err())
+    }
+
+    #[test]
+    fn get_crate_version_found() {
+        const CRATE_NAME: &str = "crate1";
+        const VERSION: &str = "1.1.5";
+
+        let mut crate_version1 = MockCrateVersion::new();
+        let mut crate_version2 = MockCrateVersion::new();
+        let mut crate_version3 = MockCrateVersion::new();
+        crate_version1
+            .expect_version()
+            .return_const("1.1.4".to_string());
+        crate_version2
+            .expect_version()
+            .return_const(VERSION.to_string());
+        crate_version3
+            .expect_version()
+            .return_const("1.1.6".to_string());
+
+        let mut tgt_crat = MockCrate::new();
+        let crate_version1_copy = crate_version1.clone();
+        let crate_version2_copy = crate_version2.clone();
+        let crate_version3_copy = crate_version3.clone();
+        tgt_crat.expect_versions()
+            .return_const(vec![
+                crate_version1_copy.as_ref(),
+                crate_version2_copy.as_ref(),
+                crate_version3_copy.as_ref(),
+            ]);
+
+        let mut index = MockIndex::new();
+        index
+            .expect_get_crate()
+            .with(predicate::eq(CRATE_NAME))
+            .return_once(|_| Some(Box::new(tgt_crat)));
+
+        let src_index = SourceIndex::new(&index).expect("SourceIndex::new");
+        let crat = src_index.get_crate(CRATE_NAME).expect("get_crate");
+        let crate_version = src_index
+            .get_crate_version(crat.as_ref(), VERSION)
+            .expect("get_crate_version");
+        assert!(core::ptr::eq(
+            crate_version as *const _ as *const (),
+            &crate_version2 as *const _ as *const ()
+        ));
     }
 }
