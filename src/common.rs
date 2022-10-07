@@ -1,8 +1,8 @@
 use crates_index;
 use semver;
+use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 pub const TARGET_TRIPLE: &'static str = "x86_64-pc-windows-msvc";
@@ -26,10 +26,6 @@ impl Version {
 
     pub fn features(&self) -> &HashMap<String, Vec<String>> {
         self.0.features()
-    }
-
-    pub fn is_yanked(&self) -> bool {
-        self.0.is_yanked()
     }
 }
 
@@ -59,14 +55,6 @@ pub enum MicrioError {
     },
     CrateNotFound {
         crate_name: String,
-    },
-    CrateVersionNotFound {
-        crate_name: String,
-        crate_version: String,
-    },
-    CrateVersionYanked {
-        crate_name: String,
-        crate_version: String,
     },
     SemVerRequirement {
         crate_name: String,
@@ -111,26 +99,6 @@ impl Display for MicrioError {
             }
             MicrioError::CrateNotFound { crate_name } => {
                 write!(f, "{} not found in the source registry", crate_name)
-            }
-            MicrioError::CrateVersionNotFound {
-                crate_name,
-                crate_version,
-            } => {
-                write!(
-                    f,
-                    "version {} of {} not found in the source registry",
-                    crate_name, crate_version
-                )
-            }
-            MicrioError::CrateVersionYanked {
-                crate_name,
-                crate_version,
-            } => {
-                write!(
-                    f,
-                    "version {} of {} is marked as yanked in the source registry",
-                    crate_name, crate_version
-                )
             }
             MicrioError::SemVerRequirement {
                 crate_name,
@@ -195,8 +163,6 @@ impl std::error::Error for MicrioError {
             MicrioError::TargetNotFound => None,
             MicrioError::ConfigExpression { error, .. } => Some(error),
             MicrioError::CrateNotFound { .. } => None,
-            MicrioError::CrateVersionNotFound { .. } => None,
-            MicrioError::CrateVersionYanked { .. } => None,
             MicrioError::SemVerRequirement { error, .. } => Some(error),
             MicrioError::SemVerVersion { error, .. } => Some(error),
             MicrioError::CompatibleCrateNotFound { .. } => None,

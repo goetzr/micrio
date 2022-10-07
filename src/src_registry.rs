@@ -1,4 +1,4 @@
-use crate::common::{self, Version, MicrioError, Result};
+use crate::common::{self, MicrioError, Result, Version};
 use cfg_expr::{targets::get_builtin_target_by_triple, targets::TargetInfo, Expression, Predicate};
 use crates_index::DependencyKind;
 use log::{trace, warn};
@@ -36,7 +36,10 @@ impl<'i> SrcIndex<'i> {
         Ok(SrcIndex { index, target })
     }
 
-    pub fn get_required_dependencies(&self, crate_versions: &Vec<Version>) -> Result<HashSet<Version>> {
+    pub fn get_required_dependencies(
+        &self,
+        crate_versions: &Vec<Version>,
+    ) -> Result<HashSet<Version>> {
         let mut required_dependencies = HashSet::new();
         for crate_version in crate_versions {
             trace!(
@@ -57,7 +60,6 @@ impl<'i> SrcIndex<'i> {
                 enabled_crate_features.join(",")
             );
             let mut enabled_dependencies = Vec::new();
-            // TODO: All dependencies should be enabled for top-level crates!
             for dependency in crate_version
                 .dependencies()
                 .iter()
@@ -66,6 +68,7 @@ impl<'i> SrcIndex<'i> {
                 if !self.dependency_enabled_for_target(crate_version, dependency)? {
                     continue;
                 }
+                // NOTE: All optional dependencies of top-level crates are force-enabled.
                 if dependency.is_optional() {
                     let enabled_features = get_enabled_features_for_optional_dependency(
                         crate_version,
@@ -93,6 +96,10 @@ impl<'i> SrcIndex<'i> {
                             enabled_features,
                             dependency.has_default_features(),
                         ));
+                    } else {
+                        warn!("{} version {}: {} optional dependency not enabled -- all optional dependencies of top-level crates should be enabled.",
+                        crate_version.name(),
+                                                    crate_version.version(), dependency.name());
                     }
                 } else {
                     let enabled_features = get_enabled_features_for_dependency(
@@ -306,7 +313,10 @@ impl<'i> SrcIndex<'i> {
                     })?;
                 let result = expr.eval(|pred| match pred {
                     Predicate::Target(tp) => Some(tp.matches(self.target)),
-                    _ => None,
+                    _ => {
+                        warn!("{} version {}: target expression {} does not contain a target predicate", crate_version.name(), crate_version.version(), expr_str);
+                        None
+                    },
                 });
                 match result {
                     Some(result) => Ok(result),
@@ -593,8 +603,12 @@ mod test {
         let index =
             crates_index::Index::new_cargo_default().expect("failed to create crates index");
         let src_index = SrcIndex::new(&index).expect("failed to create source index");
-        let indexmap_crate = index.crate_("indexmap").expect("failed to get top level crate");
-        let indexmap_crate_version = indexmap_crate.highest_normal_version().expect("failed to get top level crate version");
+        let indexmap_crate = index
+            .crate_("indexmap")
+            .expect("failed to get top level crate");
+        let indexmap_crate_version = indexmap_crate
+            .highest_normal_version()
+            .expect("failed to get top level crate version");
         let top_level_crates = vec![Version(indexmap_crate_version.clone())];
         let required_dependencies = src_index
             .get_required_dependencies(&top_level_crates)
@@ -602,7 +616,8 @@ mod test {
         for dep_crate in &required_dependencies {
             println!(
                 "Required dependency: {} version {}",
-                dep_crate.name(), dep_crate.version()
+                dep_crate.name(),
+                dep_crate.version()
             );
         }
     }
