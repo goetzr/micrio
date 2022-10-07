@@ -1,47 +1,8 @@
-use crate::common::{self, CrateId, MicrioError, Result};
+use crate::common::{self, Version, MicrioError, Result};
 use cfg_expr::{targets::get_builtin_target_by_triple, targets::TargetInfo, Expression, Predicate};
 use crates_index::DependencyKind;
 use log::{trace, warn};
-use std::{collections::{HashMap, HashSet, VecDeque}, hash::{Hash, Hasher}};
-
-#[derive(Clone)]
-pub(crate) struct Version(pub crates_index::Version);
-
-impl Version {
-    pub fn name(&self) -> &str {
-        self.0.name()
-    }
-
-    pub fn version(&self) -> &str {
-        self.0.version()
-    }
-
-    pub fn dependencies(&self) -> &[crates_index::Dependency] {
-        self.0.dependencies()
-    }
-
-    pub fn features(&self) -> &HashMap<String, Vec<String>> {
-        self.0.features()
-    }
-
-    pub fn is_yanked(&self) -> bool {
-        self.0.is_yanked()
-    }
-}
-
-impl PartialEq for Version {
-    fn eq(&self, other: &Self) -> bool {
-        self.name() == other.name() && self.version() == other.version()
-    }
-}
-impl Eq for Version {}
-
-impl Hash for Version {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.name().hash(state);
-        self.0.version().hash(state);
-    }
-}
+use std::collections::{HashMap, HashSet, VecDeque};
 
 struct EnabledDependency {
     crate_version: Version,
@@ -93,9 +54,10 @@ impl<'i> SrcIndex<'i> {
                 "{} version {}: enabled features: {}",
                 crate_version.name(),
                 crate_version.version(),
-                &enabled_crate_features.join(",")
+                enabled_crate_features.join(",")
             );
             let mut enabled_dependencies = Vec::new();
+            // TODO: All dependencies should be enabled for top-level crates!
             for dependency in crate_version
                 .dependencies()
                 .iter()
@@ -398,7 +360,7 @@ fn parse_feature_table_entry(
         _ => Err(MicrioError::FeatureTable {
             crate_name: crate_version.name().to_string(),
             crate_version: crate_version.version().to_string(),
-            error_msg: format!("entry '{entry}' in feature '{feature}': multiple '/' separators"),
+            error_msg: format!("entry '{entry}' in feature '{feature}': invalid format"),
         }),
     }
 }
@@ -448,6 +410,8 @@ fn parse_dependency_feature_entry(
     //   dep_name/feat_name (optional or required dependency)
     //   dep_name?/feat_name (optional dependency)
     //   dep:dep_name/feat_name (optional dependency)
+    //       NOTE: The code below allows a required dependency with this form, even though it shouldn't.
+    //             This is b/c it blindly strips off the "dep:" prefix at the beginning.
     //   dep:dep_name?/feat_name (optional dependency)
     let mut dep_name = dep_name;
     if let Some(stripped) = dep_name.strip_prefix("dep:") {
@@ -494,16 +458,14 @@ fn is_optional_dependency_of(name: &str, crate_version: &Version) -> bool {
         .dependencies()
         .iter()
         .filter(|dep| dep.is_optional())
-        .position(|dep| dep.name() == name)
-        .is_some()
+        .any(|dep| dep.name() == name)
 }
 
 fn is_dependency_of(name: &str, crate_version: &Version) -> bool {
     crate_version
         .dependencies()
         .iter()
-        .position(|dep| dep.name() == name)
-        .is_some()
+        .any(|dep| dep.name() == name)
 }
 
 fn get_enabled_features_for_optional_dependency(

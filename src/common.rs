@@ -2,22 +2,48 @@ use crates_index;
 use semver;
 use std::fmt;
 use std::fmt::Display;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 
 pub const TARGET_TRIPLE: &'static str = "x86_64-pc-windows-msvc";
 pub const DEFAULT_FEATURE: &'static str = "default";
 
-#[derive(PartialEq, Eq, Hash, Clone)]
-pub struct CrateId {
-    pub name: String,
-    pub version: String,
+#[derive(Clone)]
+pub struct Version(pub crates_index::Version);
+
+impl Version {
+    pub fn name(&self) -> &str {
+        self.0.name()
+    }
+
+    pub fn version(&self) -> &str {
+        self.0.version()
+    }
+
+    pub fn dependencies(&self) -> &[crates_index::Dependency] {
+        self.0.dependencies()
+    }
+
+    pub fn features(&self) -> &HashMap<String, Vec<String>> {
+        self.0.features()
+    }
+
+    pub fn is_yanked(&self) -> bool {
+        self.0.is_yanked()
+    }
 }
 
-impl CrateId {
-    pub fn new(name: &str, version: &str) -> Self {
-        CrateId {
-            name: name.to_string(),
-            version: version.to_string(),
-        }
+impl PartialEq for Version {
+    fn eq(&self, other: &Self) -> bool {
+        self.name() == other.name() && self.version() == other.version()
+    }
+}
+impl Eq for Version {}
+
+impl Hash for Version {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.name().hash(state);
+        self.0.version().hash(state);
     }
 }
 

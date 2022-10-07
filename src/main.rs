@@ -2,9 +2,9 @@ mod common;
 mod local_registry;
 mod src_registry;
 
-use common::CrateId;
+use common::Version;
 use log::error;
-use src_registry::{SrcIndex, Version};
+use src_registry::SrcIndex;
 
 fn try_main() -> anyhow::Result<()> {
     env_logger::init();
