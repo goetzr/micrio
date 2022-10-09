@@ -2,7 +2,8 @@ use crate::common::{self, MicrioError, Result, Version};
 use cfg_expr::{targets::get_builtin_target_by_triple, targets::TargetInfo, Expression, Predicate};
 use crates_index::DependencyKind;
 use log::{trace, warn};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::{collections::{HashMap, HashSet, VecDeque},
+};
 
 struct EnabledDependency {
     crate_version: Version,
@@ -48,7 +49,8 @@ impl<'i> SrcIndex<'i> {
                 crate_version.version()
             );
             let features_table = parse_features_table(crate_version)?;
-            // Enable all features for top-level crates.
+            // Enable all features for each top-level crate to ensure all potential features
+            // for each of its dependencies are enabled.
             let enabled_crate_features = features_table
                 .iter()
                 .map(|(feature, _)| feature.clone())
@@ -66,6 +68,12 @@ impl<'i> SrcIndex<'i> {
                 .filter(|d| d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
             {
                 if !self.dependency_enabled_for_target(crate_version, dependency)? {
+                    trace!(
+                        "{} version {}: {} dependency not enabled for this target",
+                        crate_version.name(),
+                        crate_version.version(),
+                        dependency.name()
+                    );
                     continue;
                 }
                 // NOTE: All optional dependencies of top-level crates are force-enabled.
@@ -79,6 +87,7 @@ impl<'i> SrcIndex<'i> {
                     )?;
                     if let Some(enabled_features) = enabled_features {
                         // Optional dependency is enabled.
+                        // This should always be true for top-level crates.
                         trace!(
                             "{} version {}: optional dependency {} features: {}",
                             crate_version.name(),
@@ -97,9 +106,13 @@ impl<'i> SrcIndex<'i> {
                             dependency.has_default_features(),
                         ));
                     } else {
-                        warn!("{} version {}: {} optional dependency not enabled -- all optional dependencies of top-level crates should be enabled.",
-                        crate_version.name(),
-                                                    crate_version.version(), dependency.name());
+                        // Should never gete here b/c we force-enable all optional dependencies of top-level crates.
+                        warn!(
+                            "{} version {}: {} optional dependency not enabled for top-level crate",
+                            crate_version.name(),
+                            crate_version.version(),
+                            dependency.name()
+                        );
                     }
                 } else {
                     let enabled_features = get_enabled_features_for_dependency(
@@ -125,15 +138,15 @@ impl<'i> SrcIndex<'i> {
                 }
             }
 
+            for enabled_dependency in enabled_dependencies {
+                self.process_enabled_dependency(enabled_dependency, &mut required_dependencies)?;
+            }
+
             trace!(
                 "{} version {}: (END) getting required dependencies",
                 crate_version.name(),
                 crate_version.version()
             );
-
-            for enabled_dependency in enabled_dependencies {
-                self.process_enabled_dependency(enabled_dependency, &mut required_dependencies)?;
-            }
         }
         Ok(required_dependencies)
     }
@@ -182,6 +195,12 @@ impl<'i> SrcIndex<'i> {
             .filter(|d| d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
         {
             if !self.dependency_enabled_for_target(&crate_version, dependency)? {
+                trace!(
+                    "{} version {}: {} dependency not enabled for this target",
+                    crate_version.name(),
+                    crate_version.version(),
+                    dependency.name()
+                );
                 continue;
             }
             if dependency.is_optional() {
@@ -190,12 +209,12 @@ impl<'i> SrcIndex<'i> {
                     &features_table,
                     &enabled_crate_features,
                     dependency,
-                    false,
+                    false, // Don't force-enable the dependency.
                 )?;
                 if let Some(enabled_features) = enabled_features {
                     // Optional dependency is enabled.
                     trace!(
-                        "{} version {}: optional dependency {} enabled with features: {}",
+                        "{} version {}: optional dependency {} features: {}",
                         crate_version.name(),
                         crate_version.version(),
                         dependency.name(),
@@ -236,6 +255,7 @@ impl<'i> SrcIndex<'i> {
         for enabled_dependency in enabled_dependencies {
             self.process_enabled_dependency(enabled_dependency, required_dependencies)?;
         }
+
         trace!(
             "{} version {}: (END) getting required dependencies",
             crate_version.name(),
@@ -250,39 +270,6 @@ impl<'i> SrcIndex<'i> {
         })
     }
 
-    fn get_dependency_crate_version<'a>(
-        &self,
-        crate_version: &Version,
-        dependency: &crates_index::Dependency,
-        dep_crate: &'a crates_index::Crate,
-    ) -> Result<&'a crates_index::Version> {
-        let version_req = semver::VersionReq::parse(dependency.requirement()).map_err(|e| {
-            MicrioError::SemVerRequirement {
-                crate_name: crate_version.name().to_string(),
-                crate_version: crate_version.version().to_string(),
-                dependency_name: dep_crate.name().to_string(),
-                error: e,
-            }
-        })?;
-        for dep_crate_version in dep_crate.versions().iter().rev().filter(|c| !c.is_yanked()) {
-            let version_str = dep_crate_version.version();
-            let version =
-                semver::Version::parse(version_str).map_err(|e| MicrioError::SemVerVersion {
-                    crate_name: dep_crate.name().to_string(),
-                    crate_version: version_str.to_string(),
-                    error: e,
-                })?;
-            if version_req.matches(&version) {
-                return Ok(dep_crate_version);
-            }
-        }
-        Err(MicrioError::CompatibleCrateNotFound {
-            crate_name: crate_version.name().to_string(),
-            crate_version: crate_version.version().to_string(),
-            dependency_name: dep_crate.name().to_string(),
-        })
-    }
-
     fn add_dependency(
         &self,
         crate_version: &Version,
@@ -291,7 +278,7 @@ impl<'i> SrcIndex<'i> {
     ) -> Result<Version> {
         let dep_crate = self.get_crate(dependency.crate_name())?;
         let dep_crate_version =
-            self.get_dependency_crate_version(crate_version, dependency, &dep_crate)?;
+            get_dependency_crate_version(crate_version, dependency, &dep_crate)?;
         let dep_crate_version = Version(dep_crate_version.clone());
         required_dependencies.insert(dep_crate_version.clone());
         Ok(dep_crate_version)
@@ -304,28 +291,80 @@ impl<'i> SrcIndex<'i> {
     ) -> Result<bool> {
         match dependency.target() {
             Some(expr_str) => {
-                let expr =
-                    Expression::parse(expr_str).map_err(|e| MicrioError::ConfigExpression {
-                        crate_name: crate_version.name().to_string(),
-                        crate_version: crate_version.version().to_string(),
-                        dependency_name: dependency.name().to_string(),
-                        error: e,
-                    })?;
-                let result = expr.eval(|pred| match pred {
-                    Predicate::Target(tp) => Some(tp.matches(self.target)),
-                    _ => {
-                        warn!("{} version {}: target expression {} does not contain a target predicate", crate_version.name(), crate_version.version(), expr_str);
-                        None
-                    },
-                });
-                match result {
-                    Some(result) => Ok(result),
-                    None => Ok(true),
+                trace!(
+                    "{} version {} dependency {} target expression = {}",
+                    crate_version.name(),
+                    crate_version.version(),
+                    dependency.name(),
+                    expr_str
+                );
+                if expr_str.starts_with("cfg") {
+                    trace!("config expression");
+                    let expr =
+                        Expression::parse(&expr_str).map_err(|e| MicrioError::ConfigExpression {
+                            crate_name: crate_version.name().to_string(),
+                            crate_version: crate_version.version().to_string(),
+                            dependency_name: dependency.name().to_string(),
+                            error: e,
+                        })?;
+                    let result = expr.eval(|pred| match pred {
+                        Predicate::Target(tp) => Some(tp.matches(self.target)),
+                        _ => {
+                            warn!(
+                                "{} version {}: target expression {} does not contain \
+                                a target predicate",
+                                crate_version.name(),
+                                crate_version.version(),
+                                expr_str
+                            );
+                            None
+                        }
+                    });
+                    match result {
+                        Some(result) => Ok(result),
+                        None => Ok(true),
+                    }
+                } else {
+                    // Full target triple specified.
+                    trace!("full target triple");
+                    Ok(expr_str == self.target.triple.as_str())
                 }
             }
             None => Ok(true),
         }
     }
+}
+
+fn get_dependency_crate_version<'a>(
+    crate_version: &Version,
+    dependency: &crates_index::Dependency,
+    dep_crate: &'a crates_index::Crate,
+) -> Result<&'a crates_index::Version> {
+    let version_req = semver::VersionReq::parse(dependency.requirement()).map_err(|e| {
+        MicrioError::SemVerRequirement {
+            crate_name: crate_version.name().to_string(),
+            crate_version: crate_version.version().to_string(),
+            dependency_name: dep_crate.name().to_string(),
+            error: e,
+        }
+    })?;
+    for dep_crate_version in dep_crate.versions().iter().rev().filter(|c| !c.is_yanked()) {
+        let version_str = dep_crate_version.version();
+        let version =
+            semver::Version::parse(version_str).map_err(|e| MicrioError::SemVerVersion {
+                crate_name: dep_crate.name().to_string(),
+                crate_version: version_str.to_string(),
+                error: e,
+            })?;
+        if version_req.matches(&version) {
+            return Ok(dep_crate_version);
+        }
+    }
+    Err(MicrioError::CompatibleCrateNotFound {
+        crate_name: crate_version.name().to_string(),
+        crate_version: crate_version.version().to_string(),
+        dependency_name: dep_crate.name().to_string(),
+    })
 }
 
 enum FeatureTableEntry {
@@ -502,7 +541,7 @@ fn get_enabled_features_for_optional_dependency(
         for entry in entries {
             match entry {
                 FeatureTableEntry::Feature(feature) => {
-                    if !features_to_examine.iter().any(|f| f == feature) {
+                    if !features_to_examine.contains(feature) {
                         features_to_examine.push_back(feature.clone())
                     }
                 }
@@ -513,14 +552,14 @@ fn get_enabled_features_for_optional_dependency(
                     if dep_name == dependency.name() =>
                 {
                     dependency_enabled = true;
-                    if !enabled_features.iter().any(|f| f == feature) {
+                    if !enabled_features.contains(feature) {
                         enabled_features.push(feature.clone())
                     }
                 }
                 FeatureTableEntry::WeakDependencyFeature { dep_name, feature }
                     if dep_name == dependency.name() =>
                 {
-                    if !weakly_enabled_features.iter().any(|f| f == feature) {
+                    if !weakly_enabled_features.contains(feature) {
                         weakly_enabled_features.push(feature.clone());
                     }
                 }
@@ -531,7 +570,7 @@ fn get_enabled_features_for_optional_dependency(
 
     if dependency_enabled {
         for weak_feature in weakly_enabled_features {
-            if !enabled_features.iter().any(|f| f == &weak_feature) {
+            if !enabled_features.contains(&weak_feature) {
                 enabled_features.push(weak_feature);
             }
         }
@@ -562,7 +601,7 @@ fn get_enabled_features_for_dependency(
         for entry in entries {
             match entry {
                 FeatureTableEntry::Feature(feature) => {
-                    if !features_to_examine.iter().any(|f| f == feature) {
+                    if !features_to_examine.contains(feature) {
                         features_to_examine.push_back(feature.clone())
                     }
                 }
@@ -576,14 +615,14 @@ fn get_enabled_features_for_dependency(
                 FeatureTableEntry::StrongDependencyFeature { dep_name, feature }
                     if dep_name == dependency.name() =>
                 {
-                    if !enabled_features.iter().any(|f| f == feature) {
+                    if !enabled_features.contains(feature) {
                         enabled_features.push(feature.clone())
                     }
                 }
                 FeatureTableEntry::WeakDependencyFeature { dep_name, feature }
                     if dep_name == dependency.name() =>
                 {
-                    warn!("{} version {}: weak dependency {dep_name}?/{feature} found in feature table for required dependency {}", crate_version.name(), crate_version.version(), dependency.name());
+                    warn!("{} version {}: weak dependency feature {feature} found in feature table for required dependency {}", crate_version.name(), crate_version.version(), dependency.name());
                 }
                 _ => (),
             }
@@ -603,13 +642,13 @@ mod test {
         let index =
             crates_index::Index::new_cargo_default().expect("failed to create crates index");
         let src_index = SrcIndex::new(&index).expect("failed to create source index");
-        let indexmap_crate = index
-            .crate_("indexmap")
+        let top_level_crate = index
+            .crate_("tokio")
             .expect("failed to get top level crate");
-        let indexmap_crate_version = indexmap_crate
+        let top_level_crate_version = top_level_crate
             .highest_normal_version()
             .expect("failed to get top level crate version");
-        let top_level_crates = vec![Version(indexmap_crate_version.clone())];
+        let top_level_crates = vec![Version(top_level_crate_version.clone())];
         let required_dependencies = src_index
             .get_required_dependencies(&top_level_crates)
             .expect("failed to get required dependencies");

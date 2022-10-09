@@ -10,13 +10,13 @@ fn try_main() -> anyhow::Result<()> {
     env_logger::init();
     let index = crates_index::Index::new_cargo_default()?;
     let src_index = SrcIndex::new(&index)?;
-    let indexmap_crate = index
-        .crate_("indexmap")
+    let top_level_crate = index
+        .crate_("tokio")
         .expect("failed to get top level crate");
-    let indexmap_crate_version = indexmap_crate
+    let top_level_crate_version = top_level_crate
         .highest_normal_version()
         .expect("failed to get top level crate version");
-    let top_level_crates = vec![Version(indexmap_crate_version.clone())];
+    let top_level_crates = vec![Version(top_level_crate_version.clone())];
     let required_dependencies = src_index.get_required_dependencies(&top_level_crates)?;
     for dep_crate in &required_dependencies {
         println!(
