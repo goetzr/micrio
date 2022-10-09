@@ -86,6 +86,9 @@ pub enum MicrioError {
         crate_version: String,
         feature_name: String,
     },
+    DstRegistryPath {
+        path: String,
+    },
 }
 
 impl Display for MicrioError {
@@ -104,8 +107,15 @@ impl Display for MicrioError {
             MicrioError::CrateNotFound { crate_name } => {
                 write!(f, "{} not found in the source registry", crate_name)
             }
-            MicrioError::CrateVersionNotFound { crate_name, crate_version } => {
-                write!(f, "{} version {} not found in the source registry", crate_name, crate_version)
+            MicrioError::CrateVersionNotFound {
+                crate_name,
+                crate_version,
+            } => {
+                write!(
+                    f,
+                    "{} version {} not found in the source registry",
+                    crate_name, crate_version
+                )
             }
             MicrioError::SemVerRequirement {
                 crate_name,
@@ -159,6 +169,9 @@ impl Display for MicrioError {
                     feature_name, crate_name, crate_version
                 )
             }
+            MicrioError::DstRegistryPath { path } => {
+                write!(f, "invalid destination path '{path}': destination path must point to an existing directory")
+            }
         }
     }
 }
@@ -176,6 +189,7 @@ impl std::error::Error for MicrioError {
             MicrioError::CompatibleCrateNotFound { .. } => None,
             MicrioError::FeatureTable { .. } => None,
             MicrioError::FeatureNotFound { .. } => None,
+            MicrioError::DstRegistryPath { .. } => None,
         }
     }
 }

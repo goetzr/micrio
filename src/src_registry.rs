@@ -25,16 +25,16 @@ impl EnabledDependency {
     }
 }
 
-pub struct SrcIndex<'i> {
+pub struct SrcRegistry<'i> {
     index: &'i crates_index::Index,
     target: &'static TargetInfo,
 }
 
-impl<'i> SrcIndex<'i> {
+impl<'i> SrcRegistry<'i> {
     pub fn new(index: &'i crates_index::Index) -> Result<Self> {
         let target = get_builtin_target_by_triple(common::TARGET_TRIPLE)
             .ok_or(MicrioError::TargetNotFound)?;
-        Ok(SrcIndex { index, target })
+        Ok(SrcRegistry { index, target })
     }
 
     pub fn get_required_dependencies(
@@ -632,8 +632,6 @@ fn get_enabled_features_for_dependency(
 
 #[cfg(test)]
 mod test {
-    use super::*;
-
     #[test]
     fn test1() {}
 }
