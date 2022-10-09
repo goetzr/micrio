@@ -39,7 +39,7 @@ impl<'i> SrcIndex<'i> {
 
     pub fn get_required_dependencies(
         &self,
-        crate_versions: &Vec<Version>,
+        crate_versions: &HashSet<Version>,
     ) -> Result<HashSet<Version>> {
         let mut required_dependencies = HashSet::new();
         for crate_version in crate_versions {
@@ -265,9 +265,7 @@ impl<'i> SrcIndex<'i> {
     }
 
     fn get_crate(&self, name: &str) -> Result<crates_index::Crate> {
-        self.index.crate_(name).ok_or(MicrioError::CrateNotFound {
-            crate_name: name.to_string(),
-        })
+        common::get_crate(self.index, name)
     }
 
     fn add_dependency(
@@ -637,27 +635,5 @@ mod test {
     use super::*;
 
     #[test]
-    fn test1() {
-        env_logger::init();
-        let index =
-            crates_index::Index::new_cargo_default().expect("failed to create crates index");
-        let src_index = SrcIndex::new(&index).expect("failed to create source index");
-        let top_level_crate = index
-            .crate_("tokio")
-            .expect("failed to get top level crate");
-        let top_level_crate_version = top_level_crate
-            .highest_normal_version()
-            .expect("failed to get top level crate version");
-        let top_level_crates = vec![Version(top_level_crate_version.clone())];
-        let required_dependencies = src_index
-            .get_required_dependencies(&top_level_crates)
-            .expect("failed to get required dependencies");
-        for dep_crate in &required_dependencies {
-            println!(
-                "Required dependency: {} version {}",
-                dep_crate.name(),
-                dep_crate.version()
-            );
-        }
-    }
+    fn test1() {}
 }

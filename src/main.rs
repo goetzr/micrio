@@ -1,30 +1,30 @@
 mod common;
-mod local_registry;
+mod top_level;
 mod src_registry;
+mod dst_registry;
 
-use common::Version;
-use log::error;
+use top_level::TopLevel;
 use src_registry::SrcIndex;
+use std::collections::HashSet;
+use log::error;
 
 fn try_main() -> anyhow::Result<()> {
     env_logger::init();
     let index = crates_index::Index::new_cargo_default()?;
+    let top_level = TopLevel::new(&index);
     let src_index = SrcIndex::new(&index)?;
-    let top_level_crate = index
-        .crate_("tokio")
-        .expect("failed to get top level crate");
-    let top_level_crate_version = top_level_crate
-        .highest_normal_version()
-        .expect("failed to get top level crate version");
-    let top_level_crates = vec![Version(top_level_crate_version.clone())];
-    let required_dependencies = src_index.get_required_dependencies(&top_level_crates)?;
-    for dep_crate in &required_dependencies {
-        println!(
-            "Dependent crate: {} version {}",
-            dep_crate.name(),
-            dep_crate.version()
-        );
+
+    let most_downloaded = top_level.get_n_most_downloaded(50)?;
+    let handpicked = top_level.get_handpicked()?;
+    let mut crates = HashSet::from_iter(most_downloaded.into_iter().chain(handpicked.into_iter()));
+
+    let dependencies = src_index.get_required_dependencies(&crates)?;
+    crates.extend(dependencies);
+
+    for crat in &crates {
+        println!("{} version {}", crat.name(), crat.version());
     }
+    
     Ok(())
 }
 

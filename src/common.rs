@@ -56,6 +56,10 @@ pub enum MicrioError {
     CrateNotFound {
         crate_name: String,
     },
+    CrateVersionNotFound {
+        crate_name: String,
+        crate_version: String,
+    },
     SemVerRequirement {
         crate_name: String,
         crate_version: String,
@@ -99,6 +103,9 @@ impl Display for MicrioError {
             }
             MicrioError::CrateNotFound { crate_name } => {
                 write!(f, "{} not found in the source registry", crate_name)
+            }
+            MicrioError::CrateVersionNotFound { crate_name, crate_version } => {
+                write!(f, "{} version {} not found in the source registry", crate_name, crate_version)
             }
             MicrioError::SemVerRequirement {
                 crate_name,
@@ -163,6 +170,7 @@ impl std::error::Error for MicrioError {
             MicrioError::TargetNotFound => None,
             MicrioError::ConfigExpression { error, .. } => Some(error),
             MicrioError::CrateNotFound { .. } => None,
+            MicrioError::CrateVersionNotFound { .. } => None,
             MicrioError::SemVerRequirement { error, .. } => Some(error),
             MicrioError::SemVerVersion { error, .. } => Some(error),
             MicrioError::CompatibleCrateNotFound { .. } => None,
@@ -179,3 +187,9 @@ impl From<crates_index::Error> for MicrioError {
 }
 
 pub type Result<T> = std::result::Result<T, MicrioError>;
+
+pub fn get_crate(index: &crates_index::Index, name: &str) -> Result<crates_index::Crate> {
+    index.crate_(name).ok_or(MicrioError::CrateNotFound {
+        crate_name: name.to_string(),
+    })
+}
