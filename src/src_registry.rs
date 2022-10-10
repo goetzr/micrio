@@ -1,9 +1,137 @@
-use crate::common::{self, MicrioError, Result, Version};
+use crate::common::{self, Version};
 use cfg_expr::{targets::get_builtin_target_by_triple, targets::TargetInfo, Expression, Predicate};
 use crates_index::DependencyKind;
 use log::{trace, warn};
-use std::{collections::{HashMap, HashSet, VecDeque},
-};
+use std::{collections::{HashMap, HashSet, VecDeque}};
+use std::fmt::{self, Display};
+
+#[derive(Debug)]
+pub enum Error {
+    Create,
+    CrateNotFound(common::Error),
+    ConfigExpression {
+        crate_name: String,
+        crate_version: String,
+        dependency_name: String,
+        error: cfg_expr::ParseError,
+    },
+    SemVerRequirement {
+        crate_name: String,
+        crate_version: String,
+        dependency_name: String,
+        error: semver::Error,
+    },
+    SemVerVersion {
+        crate_name: String,
+        crate_version: String,
+        error: semver::Error,
+    },
+    CompatibleCrateNotFound {
+        crate_name: String,
+        crate_version: String,
+        dependency_name: String,
+    },
+    FeatureTable {
+        crate_name: String,
+        crate_version: String,
+        error_msg: String,
+    },
+    FeatureNotFound {
+        crate_name: String,
+        crate_version: String,
+        feature_name: String,
+    },
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Create => {
+                write!(f, "failed to create source registry: target triple {} not found", common::TARGET_TRIPLE)
+            }
+            Error::CrateNotFound(e) => {
+                write!(f, "failed to get crate: {e}")
+            }
+            Error::ConfigExpression {
+                crate_name,
+                crate_version,
+                dependency_name,
+                error,
+            } => {
+                write!(f, "error parsing target config expression for the {} dependency of {} version {}: {}", dependency_name, crate_name, crate_version, error)
+            }
+            Error::SemVerRequirement {
+                crate_name,
+                crate_version,
+                dependency_name,
+                error,
+            } => {
+                write!(
+                    f,
+                    "error parsing version requirement for the {} dependency of {} version {}: {}",
+                    dependency_name, crate_name, crate_version, error
+                )
+            }
+            Error::SemVerVersion {
+                crate_name,
+                crate_version,
+                error,
+            } => {
+                write!(
+                    f,
+                    "error parsing version string for {} version {}: {}",
+                    crate_name, crate_version, error
+                )
+            }
+            Error::CompatibleCrateNotFound {
+                crate_name,
+                crate_version,
+                dependency_name,
+            } => {
+                write!(f, "compatible crate not found in the source registry for the {} dependency of {} version {}", dependency_name, crate_name, crate_version)
+            }
+            Error::FeatureTable {
+                crate_name,
+                crate_version,
+                error_msg,
+            } => {
+                write!(
+                    f,
+                    "feature table error with {} version {}: {}",
+                    crate_name, crate_version, error_msg
+                )
+            }
+            Error::FeatureNotFound {
+                crate_name,
+                crate_version,
+                feature_name,
+            } => {
+                write!(
+                    f,
+                    "feature {} not found in version {} of {}",
+                    feature_name, crate_name, crate_version
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Create => None,
+            Error::CrateNotFound(e) => Some(e),
+            Error::ConfigExpression { error, .. } => Some(error),
+            Error::SemVerRequirement { error, .. } => Some(error),
+            Error::SemVerVersion { error, .. } => Some(error),
+            Error::CompatibleCrateNotFound { .. } => None,
+            Error::FeatureTable { .. } => None,
+            Error::FeatureNotFound { .. } => None,
+        }
+    }
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 struct EnabledDependency {
     crate_version: Version,
@@ -33,7 +161,7 @@ pub struct SrcRegistry<'i> {
 impl<'i> SrcRegistry<'i> {
     pub fn new(index: &'i crates_index::Index) -> Result<Self> {
         let target = get_builtin_target_by_triple(common::TARGET_TRIPLE)
-            .ok_or(MicrioError::TargetNotFound)?;
+            .ok_or(Error::Create)?;
         Ok(SrcRegistry { index, target })
     }
 
@@ -264,17 +392,13 @@ impl<'i> SrcRegistry<'i> {
         Ok(())
     }
 
-    fn get_crate(&self, name: &str) -> Result<crates_index::Crate> {
-        common::get_crate(self.index, name)
-    }
-
     fn add_dependency(
         &self,
         crate_version: &Version,
         dependency: &crates_index::Dependency,
         required_dependencies: &mut HashSet<Version>,
     ) -> Result<Version> {
-        let dep_crate = self.get_crate(dependency.crate_name())?;
+        let dep_crate = common::get_crate(self.index, dependency.crate_name()).map_err(|e| Error::CrateNotFound(e))?;
         let dep_crate_version =
             get_dependency_crate_version(crate_version, dependency, &dep_crate)?;
         let dep_crate_version = Version(dep_crate_version.clone());
@@ -299,7 +423,7 @@ impl<'i> SrcRegistry<'i> {
                 if expr_str.starts_with("cfg") {
                     trace!("config expression");
                     let expr =
-                        Expression::parse(&expr_str).map_err(|e| MicrioError::ConfigExpression {
+                        Expression::parse(&expr_str).map_err(|e| Error::ConfigExpression {
                             crate_name: crate_version.name().to_string(),
                             crate_version: crate_version.version().to_string(),
                             dependency_name: dependency.name().to_string(),
@@ -339,7 +463,7 @@ fn get_dependency_crate_version<'a>(
     dep_crate: &'a crates_index::Crate,
 ) -> Result<&'a crates_index::Version> {
     let version_req = semver::VersionReq::parse(dependency.requirement()).map_err(|e| {
-        MicrioError::SemVerRequirement {
+        Error::SemVerRequirement {
             crate_name: crate_version.name().to_string(),
             crate_version: crate_version.version().to_string(),
             dependency_name: dep_crate.name().to_string(),
@@ -349,7 +473,7 @@ fn get_dependency_crate_version<'a>(
     for dep_crate_version in dep_crate.versions().iter().rev().filter(|c| !c.is_yanked()) {
         let version_str = dep_crate_version.version();
         let version =
-            semver::Version::parse(version_str).map_err(|e| MicrioError::SemVerVersion {
+            semver::Version::parse(version_str).map_err(|e| Error::SemVerVersion {
                 crate_name: dep_crate.name().to_string(),
                 crate_version: version_str.to_string(),
                 error: e,
@@ -358,7 +482,7 @@ fn get_dependency_crate_version<'a>(
             return Ok(dep_crate_version);
         }
     }
-    Err(MicrioError::CompatibleCrateNotFound {
+    Err(Error::CompatibleCrateNotFound {
         crate_name: crate_version.name().to_string(),
         crate_version: crate_version.version().to_string(),
         dependency_name: dep_crate.name().to_string(),
@@ -404,7 +528,7 @@ fn parse_feature_table_entry(
     match parts.len() {
         1 => parse_feature_or_dependency_entry(crate_version, feature, entry),
         2 => parse_dependency_feature_entry(crate_version, feature, entry, parts[0], parts[1]),
-        _ => Err(MicrioError::FeatureTable {
+        _ => Err(Error::FeatureTable {
             crate_name: crate_version.name().to_string(),
             crate_version: crate_version.version().to_string(),
             error_msg: format!("entry '{entry}' in feature '{feature}': invalid format"),
@@ -425,7 +549,7 @@ fn parse_feature_or_dependency_entry(
         if is_optional_dependency_of(dep_name, crate_version) {
             Ok(FeatureTableEntry::Dependency(dep_name.to_string()))
         } else {
-            Err(MicrioError::FeatureTable {
+            Err(Error::FeatureTable {
                 crate_name: crate_version.name().to_string(),
                 crate_version: crate_version.version().to_string(),
                 error_msg: format!("entry '{entry}' in feature '{feature}': name after 'dep:' not an optional dependency")
@@ -437,7 +561,7 @@ fn parse_feature_or_dependency_entry(
         } else if is_optional_dependency_of(entry, crate_version) {
             Ok(FeatureTableEntry::Dependency(entry.to_string()))
         } else {
-            Err(MicrioError::FeatureTable {
+            Err(Error::FeatureTable {
                 crate_name: crate_version.name().to_string(),
                 crate_version: crate_version.version().to_string(),
                 error_msg: format!("entry '{entry}' in feature '{feature}': '{entry}' not a feature or an optional dependency")
@@ -472,7 +596,7 @@ fn parse_dependency_feature_entry(
                 feature: dep_feat_name.to_string(),
             })
         } else {
-            Err(MicrioError::FeatureTable {
+            Err(Error::FeatureTable {
                 crate_name: crate_version.name().to_string(),
                 crate_version: crate_version.version().to_string(),
                 error_msg: format!("entry '{entry}' in feature '{feature}': name before '/' not an optional dependency")
@@ -485,7 +609,7 @@ fn parse_dependency_feature_entry(
                 feature: dep_feat_name.to_string(),
             })
         } else {
-            Err(MicrioError::FeatureTable {
+            Err(Error::FeatureTable {
                 crate_name: crate_version.name().to_string(),
                 crate_version: crate_version.version().to_string(),
                 error_msg: format!(
@@ -531,7 +655,7 @@ fn get_enabled_features_for_optional_dependency(
         let entries =
             features_table
                 .get(&feature_under_exam)
-                .ok_or(MicrioError::FeatureNotFound {
+                .ok_or(Error::FeatureNotFound {
                     crate_name: crate_version.name().to_string(),
                     crate_version: crate_version.version().to_string(),
                     feature_name: feature_under_exam,
@@ -591,7 +715,7 @@ fn get_enabled_features_for_dependency(
         let entries =
             features_table
                 .get(&feature_under_exam)
-                .ok_or(MicrioError::FeatureNotFound {
+                .ok_or(Error::FeatureNotFound {
                     crate_name: crate_version.name().to_string(),
                     crate_version: crate_version.version().to_string(),
                     feature_name: feature_under_exam,

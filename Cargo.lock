@@ -629,7 +629,9 @@ dependencies = [
  "crates-index",
  "crates_io_api",
  "env_logger",
+ "http",
  "log",
+ "reqwest",
  "semver",
 ]
 
