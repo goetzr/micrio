@@ -12,7 +12,7 @@ pub enum Error {
     DownloadCrate {
         crate_name: String,
         crate_version: String,
-        error: reqwest::Error,
+        error: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 }
 
@@ -41,7 +41,7 @@ impl std::error::Error for Error {
         match self {
             Error::Create(e) => Some(e),
             Error::CreateRuntime(e) => Some(e),
-            Error::DownloadCrate { error, .. } => Some(error),
+            Error::DownloadCrate { error, .. } => Some(error.clone().as_ref()),
         }
     }
 }
@@ -77,23 +77,46 @@ impl DstRegistry {
     fn populate_registry(&self, crates: &HashSet<Version>) -> Result<()> {
         // TODO: Download each crate to the appropriate location in the index.
         // https://static.crates.io/crates/{name}/{name}-{version}.crate
-        const DL_URL: &'static str = "https://static.crates.io/crates";
+
         let mut rt = tokio::runtime::Runtime::new().map_err(|e| Error::CreateRuntime(e))?;
 
-        async fn download_crate(crat: &Version) -> Result<reqwest::Response> {
-            let response = reqwest::get(format!(
+        async fn download_crate(name: &str, version: &str) -> Result<reqwest::Response> {
+            const DL_URL: &'static str = "https://static.crates.io/crates";
+            let crate_url = format!(
                 "{DL_URL}/{}/{}-{}.crate",
-                crat.name(),
-                crat.name(),
-                crat.version()
-            ))
-            .await
-            .map_err(|e| Error::DownloadCrate {
-                crate_name: crat.name().to_string(),
-                crate_version: crat.version().to_string(),
-                error: e,
-            });
+                name,
+                name,
+                version
+            );
+            let response = reqwest::get(crate_url)
+                .await
+                .map_err(|e| Error::DownloadCrate {
+                    crate_name: name.to_string(),
+                    crate_version: version.to_string(),
+                    error: e,
+                });
             response
+        }
+
+        async fn download_crates(crates: &HashSet<Version>) -> Vec<Result<()>> {
+            let handles = Vec::new();
+            let mut crate_versions = Vec::new();
+            for crat in crates {
+                let name = crat.name().to_string();
+                let version = crat.version().to_string();
+                crate_versions.push((name.clone(), version.clone()));
+                handles.push(tokio::spawn(async move {
+                    download_crate(&name, &version)
+                }));
+            }
+
+            let results = Vec::new();
+            for (i, handle) in handles.into_iter().enumerate() {
+                match handle.await {
+                    Ok(result) => results.push(result),
+                    Err(e) => results.push(Err(Error::DownloadCrate { crate_name: crate_versions[i].0, crate_version: crate_versions[i].1, error: e }))
+                }
+            }
         }
 
         rt.block_on(async {
