@@ -635,6 +635,7 @@ name = "micrio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "cfg-expr",
  "crates-index",
  "crates_io_api",

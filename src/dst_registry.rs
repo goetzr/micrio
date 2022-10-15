@@ -4,6 +4,7 @@ use std::fmt::{self, Display};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use tokio::task;
 
 #[derive(Debug)]
 pub enum Error {
@@ -41,7 +42,7 @@ impl std::error::Error for Error {
         match self {
             Error::Create(e) => Some(e),
             Error::CreateRuntime(e) => Some(e),
-            Error::DownloadCrate { error, .. } => Some(error.clone().as_ref()),
+            Error::DownloadCrate { error, .. } => Some(error.as_ref()),
         }
     }
 }
@@ -75,55 +76,70 @@ impl DstRegistry {
     }
 
     fn populate_registry(&self, crates: &HashSet<Version>) -> Result<()> {
-        // TODO: Download each crate to the appropriate location in the index.
-        // https://static.crates.io/crates/{name}/{name}-{version}.crate
-
-        let mut rt = tokio::runtime::Runtime::new().map_err(|e| Error::CreateRuntime(e))?;
-
-        async fn download_crate(name: &str, version: &str) -> Result<reqwest::Response> {
-            const DL_URL: &'static str = "https://static.crates.io/crates";
-            let crate_url = format!(
-                "{DL_URL}/{}/{}-{}.crate",
-                name,
-                name,
-                version
-            );
-            let response = reqwest::get(crate_url)
-                .await
-                .map_err(|e| Error::DownloadCrate {
-                    crate_name: name.to_string(),
-                    crate_version: version.to_string(),
-                    error: e,
-                });
-            response
-        }
-
-        async fn download_crates(crates: &HashSet<Version>) -> Vec<Result<()>> {
-            let handles = Vec::new();
-            let mut crate_versions = Vec::new();
-            for crat in crates {
-                let name = crat.name().to_string();
-                let version = crat.version().to_string();
-                crate_versions.push((name.clone(), version.clone()));
-                handles.push(tokio::spawn(async move {
-                    download_crate(&name, &version)
-                }));
-            }
-
-            let results = Vec::new();
-            for (i, handle) in handles.into_iter().enumerate() {
-                match handle.await {
-                    Ok(result) => results.push(result),
-                    Err(e) => results.push(Err(Error::DownloadCrate { crate_name: crate_versions[i].0, crate_version: crate_versions[i].1, error: e }))
+        let crates = crates.iter().cloned().collect::<Vec<_>>();
+        let rt = tokio::runtime::Runtime::new().map_err(|e| Error::CreateRuntime(e))?;
+        let results = rt.block_on(download_crates(crates.clone()));
+        
+        for (i, result) in results.into_iter().enumerate() {
+            let name = crates[i].name();
+            let version = crates[i].version();
+            match result {
+                Ok(fut_res) => {
+                    let crate_file_contents = fut_res?;
+                    // TODO: Write response to appropriate file in registry.
+                },
+                Err(e) => {
+                    return Err(Error::DownloadCrate { crate_name: name.to_string(), crate_version: version.to_string(), error: Box::new(e) });
                 }
             }
         }
 
-        rt.block_on(async {
-            for crat in crates {
-                tokio::spawn(download_crate(crat));
-            }
-        });
         Ok(())
     }
+
+    
+}
+
+async fn download_crates(crates: Vec<Version>) -> Vec<std::result::Result<Result<bytes::Bytes>, task::JoinError>> {
+    let mut handles = Vec::new();
+    for crat in crates {
+        let name = crat.name().to_string();
+        let version = crat.version().to_string();
+        handles.push(tokio::spawn(async move {
+            download_crate(&name, &version).await
+        }));
+    }
+
+    let mut results = Vec::new();
+    for handle in handles {
+        results.push(handle.await);
+    }
+    results
+}
+
+async fn download_crate(name: &str, version: &str) -> Result<bytes::Bytes> {
+    const DL_URL: &'static str = "https://static.crates.io/crates";
+    let crate_url = format!(
+        "{DL_URL}/{}/{}-{}.crate",
+        name,
+        name,
+        version
+    );
+
+    let response = reqwest::get(crate_url)
+        .await
+        .map_err(|e| Error::DownloadCrate {
+            crate_name: name.to_string(),
+            crate_version: version.to_string(),
+            error: Box::new(e),
+        })?;
+
+    let bytes = response.bytes()
+        .await
+        .map_err(|e| Error::DownloadCrate {
+            crate_name: name.to_string(),
+            crate_version: version.to_string(),
+            error: Box::new(e),
+        });
+    bytes
 }
