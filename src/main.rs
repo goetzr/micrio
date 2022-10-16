@@ -23,6 +23,8 @@ fn try_main() -> anyhow::Result<()> {
     let dependencies = src_registry.get_required_dependencies(&crates)?;
     crates.extend(dependencies);
 
+    dst_registry.populate(&crates)?;
+
     for crat in &crates {
         println!("{} version {}", crat.name(), crat.version());
     }
