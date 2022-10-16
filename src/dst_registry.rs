@@ -1,37 +1,60 @@
 use crate::common::Version;
 use std::collections::HashSet;
 use std::fmt::{self, Display};
-use std::fs;
+use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf};
 use tokio::task;
 
 #[derive(Debug)]
 pub enum Error {
-    Create(io::Error),
+    Create {
+        msg: String,
+        error: io::Error,
+    },
+    CreateIndexDir(io::Error),
+    CreateRegistryDir(io::Error),
     CreateRuntime(io::Error),
     DownloadCrate {
         crate_name: String,
         crate_version: String,
         error: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
+    WriteRegistryFile {
+        crate_name: String,
+        crate_version: String,
+        error: io::Error,
+    },
 }
 
 impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Create(e) => {
-                write!(f, "failed to create destination registry: {e}")
+            Error::Create { msg, error } => {
+                write!(f, "failed to create fresh destination registry directory: {msg}: {error}")
+            }
+            Error::CreateIndexDir(e) => {
+                write!(f, "error populating index: failed to create the index directory: {e}")
+            }
+            Error::CreateRegistryDir(e) => {
+                write!(f, "error populating registry: failed to create the registry directory: {e}")
             }
             Error::CreateRuntime(e) => {
-                write!(f, "failed to create tokio runtime to download crates: {e}")
+                write!(f, "error populating registry: failed to create tokio runtime to download crates: {e}")
             }
             Error::DownloadCrate {
                 crate_name,
                 crate_version,
                 error,
             } => {
-                write!(f, "failed to {crate_name} version {crate_version}: {error}")
+                write!(f, "error populating registry: failed to download {crate_name} version {crate_version}: {error}")
+            }
+            Error::WriteRegistryFile {
+                crate_name,
+                crate_version,
+                error,
+            } => {
+                write!(f, "error populating registry: failed to write {crate_name} version {crate_version} to its file on disk: {error}")
             }
         }
     }
@@ -40,7 +63,9 @@ impl Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::Create(e) => Some(e),
+            Error::Create { error, .. } => Some(error),
+            Error::CreateIndexDir(e) => Some(e),
+            Error::CreateRegistryDir(e) => Some(e),
             Error::CreateRuntime(e) => Some(e),
             Error::DownloadCrate { error, .. } => Some(error.as_ref()),
         }
@@ -57,8 +82,8 @@ impl DstRegistry {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         // Remove the directory then re-create it so we can start with a clean directory.
         let path = path.as_ref();
-        fs::remove_dir_all(path).map_err(|e| Error::Create(e))?;
-        fs::create_dir(path).map_err(|e| Error::Create(e))?;
+        fs::remove_dir_all(path).map_err(|e| Error::Create { msg: "failed to remove existing directory".to_string(), error: e })?;
+        fs::create_dir(path).map_err(|e| Error::Create { msg: "failed to create new directory".to_string(), error: e })?;
         Ok(DstRegistry {
             path: path.to_path_buf(),
         })
@@ -69,13 +94,19 @@ impl DstRegistry {
     }
 
     fn populate_index(&self, crates: &HashSet<Version>) -> Result<()> {
+        const INDEX_DIR: &'static str = "index";
+        fs::create_dir(INDEX_DIR).map_err(|e| Error::CreateIndexDir(e));
+
         // TODO: Write config.json file.
         // TODO: Serialize each crate version to JSON at the appropriate location in the index.
-        const INDEX_DIR: &'static str = "index";
+
         Ok(())
     }
 
     fn populate_registry(&self, crates: &HashSet<Version>) -> Result<()> {
+        const REGISTRY_DIR: &'static str = "registry";
+        fs::create_dir(REGISTRY_DIR).map_err(|e| Error::CreateRegistryDir(e));
+
         let crates = crates.iter().cloned().collect::<Vec<_>>();
         let rt = tokio::runtime::Runtime::new().map_err(|e| Error::CreateRuntime(e))?;
         let results = rt.block_on(download_crates(crates.clone()));
@@ -96,8 +127,6 @@ impl DstRegistry {
 
         Ok(())
     }
-
-    
 }
 
 async fn download_crates(crates: Vec<Version>) -> Vec<std::result::Result<Result<bytes::Bytes>, task::JoinError>> {
@@ -142,4 +171,10 @@ async fn download_crate(name: &str, version: &str) -> Result<bytes::Bytes> {
             error: Box::new(e),
         });
     bytes
+}
+
+fn write_crate_file(name: &str, version: &str, file_contents: bytes::Bytes) -> Result<()> {
+    // TODO: Need constant for "registry" folder.
+    File::create()
+    unimplemented!()
 }
