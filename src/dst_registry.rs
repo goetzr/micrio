@@ -15,6 +15,12 @@ pub enum Error {
     CreateIndexDir(io::Error),
     WriteConfigJson(io::Error),
     CreateRegistryDir(io::Error),
+    AddCrateToIndex {
+        crate_name: String,
+        crate_version: String,
+        msg: String,
+        error: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
     CreateRuntime(io::Error),
     DownloadCrate {
         crate_name: String,
@@ -48,6 +54,17 @@ impl Display for Error {
                 write!(
                     f,
                     "error populating index: failed to write config.json file: {e}"
+                )
+            }
+            Error::AddCrateToIndex {
+                crate_name,
+                crate_version,
+                msg,
+                error,
+            } => {
+                write!(
+                    f,
+                    "error populating index: failed to add {crate_name} version {crate_version} to the index: {msg}: {error}"
                 )
             }
             Error::CreateRegistryDir(e) => {
@@ -84,6 +101,7 @@ impl std::error::Error for Error {
             Error::Create { error, .. } => Some(error),
             Error::CreateIndexDir(e) => Some(e),
             Error::WriteConfigJson(e) => Some(e),
+            Error::AddCrateToIndex { error, .. } => Some(error.as_ref()),
             Error::CreateRegistryDir(e) => Some(e),
             Error::CreateRuntime(e) => Some(e),
             Error::DownloadCrate { error, .. } => Some(error.as_ref()),
@@ -124,16 +142,14 @@ impl DstRegistry {
         populate_registry(top_dir_path.as_ref(), &crates)?;
         Ok(())
     }
-
-    
 }
 
 fn populate_index(top_dir_path: &str, crates: &HashSet<Version>) -> Result<()> {
     let index_dir_path = format!("{top_dir_path}/{INDEX_DIR}");
     fs::create_dir(index_dir_path).map_err(|e| Error::CreateIndexDir(e))?;
-    
+
     write_config_json_file(top_dir_path)?;
-    // TODO: Serialize each crate version to JSON at the appropriate location in the index.
+    add_crates_to_index(top_dir_path, &crates)?;
 
     Ok(())
 }
@@ -170,11 +186,59 @@ fn populate_registry(top_dir_path: &str, crates: &HashSet<Version>) -> Result<()
 fn write_config_json_file(top_dir_path: &str) -> Result<()> {
     let config_json_path = format!("{top_dir_path}/{INDEX_DIR}/config.json");
     let config_json_contents = format!(
-r#"{{
+        r#"{{
     "dl": "file://{}/{REGISTRY_DIR}"
-}}"#
-        , top_dir_path);
+}}"#,
+        top_dir_path
+    );
     fs::write(config_json_path, config_json_contents).map_err(|e| Error::WriteConfigJson(e))?;
+    Ok(())
+}
+
+fn add_crates_to_index(top_dir_path: &str, crates: &HashSet<Version>) -> Result<()> {
+    for crat in crates {
+        add_crate_to_index(top_dir_path, crat)?;
+    }
+    Ok(())
+}
+
+fn add_crate_to_index(top_dir_path: &str, crat: &Version) -> Result<()> {
+    let dir1_name = crat.name().chars().take(2).collect::<String>();
+    let crate_path = format!("{top_dir_path}/{INDEX_DIR}/{dir1_name}");
+    if !Path::new(&crate_path).exists() {
+        fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
+            crate_name: crat.name().to_string(),
+            crate_version: crat.version().to_string(),
+            msg: "failed to create first directory".to_string(),
+            error: Box::new(e),
+        })?;
+    }
+
+    let dir2_name = crat.name().chars().skip(2).take(2).collect::<String>();
+    let crate_path = format!("{crate_path}/{dir2_name}");
+    if !Path::new(&crate_path).exists() {
+        fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
+            crate_name: crat.name().to_string(),
+            crate_version: crat.version().to_string(),
+            msg: "failed to create second directory".to_string(),
+            error: Box::new(e),
+        })?;
+    }
+
+    let crate_path = format!("{crate_path}/{}", crat.name());
+    let crate_version_info = serde_json::to_string(crat).map_err(|e| Error::AddCrateToIndex {
+        crate_name: crat.name().to_string(),
+        crate_version: crat.version().to_string(),
+        msg: "failed to serialize crate version information to a string".to_string(),
+        error: Box::new(e),
+    })?;
+    fs::write(crate_path, crate_version_info).map_err(|e| Error::AddCrateToIndex {
+        crate_name: crat.name().to_string(),
+        crate_version: crat.version().to_string(),
+        msg: "failed to write crate version information to disk".to_string(),
+        error: Box::new(e),
+    })?;
+
     Ok(())
 }
 

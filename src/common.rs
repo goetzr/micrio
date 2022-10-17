@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
 use std::hash::{Hash, Hasher};
+use serde::Serialize;
 
 pub const TARGET_TRIPLE: &'static str = "x86_64-pc-windows-msvc";
 pub const DEFAULT_FEATURE: &'static str = "default";
@@ -42,7 +43,7 @@ impl std::error::Error for Error {}
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub struct Version(pub crates_index::Version);
 
 impl Version {
