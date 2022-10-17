@@ -1,2 +1,4 @@
+- Append crate information to file in index if already exists.
+
 - Running tests:
       $env:RUST_LOG = "trace"; cargo test -- --nocapture

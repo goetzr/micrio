@@ -14,13 +14,13 @@ pub enum Error {
     },
     CreateIndexDir(io::Error),
     WriteConfigJson(io::Error),
-    CreateRegistryDir(io::Error),
     AddCrateToIndex {
         crate_name: String,
         crate_version: String,
         msg: String,
         error: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
+    CreateRegistryDir(io::Error),
     CreateRuntime(io::Error),
     DownloadCrate {
         crate_name: String,
@@ -138,8 +138,8 @@ impl DstRegistry {
 
     pub fn populate(&self, crates: &HashSet<Version>) -> Result<()> {
         let top_dir_path = self.path.to_string_lossy();
-        populate_index(top_dir_path.as_ref(), &crates)?;
-        populate_registry(top_dir_path.as_ref(), &crates)?;
+        populate_index(top_dir_path.as_ref(), crates)?;
+        populate_registry(top_dir_path.as_ref(), crates)?;
         Ok(())
     }
 }
@@ -168,9 +168,10 @@ fn populate_registry(top_dir_path: &str, crates: &HashSet<Version>) -> Result<()
         match result {
             Ok(fut_res) => {
                 let crate_file_contents = fut_res?;
-                write_crate_file(&registry_dir_path, name, version, crate_file_contents)?;
+                add_crate_to_registry(&registry_dir_path, name, version, crate_file_contents)?;
             }
             Err(e) => {
+                // Task panicked.
                 return Err(Error::DownloadCrate {
                     crate_name: name.to_string(),
                     crate_version: version.to_string(),
@@ -209,7 +210,7 @@ fn add_crate_to_index(top_dir_path: &str, crat: &Version) -> Result<()> {
         fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
             crate_name: crat.name().to_string(),
             crate_version: crat.version().to_string(),
-            msg: "failed to create first directory".to_string(),
+            msg: format!("failed to create {dir1_name} directory"),
             error: Box::new(e),
         })?;
     }
@@ -220,10 +221,12 @@ fn add_crate_to_index(top_dir_path: &str, crat: &Version) -> Result<()> {
         fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
             crate_name: crat.name().to_string(),
             crate_version: crat.version().to_string(),
-            msg: "failed to create second directory".to_string(),
+            msg: format!("failed to create {dir2_name} directory"),
             error: Box::new(e),
         })?;
     }
+
+    // TODO: If the file already exists, open it and *APPEND* the crate version information!
 
     let crate_path = format!("{crate_path}/{}", crat.name());
     let crate_version_info = serde_json::to_string(crat).map_err(|e| Error::AddCrateToIndex {
@@ -235,7 +238,7 @@ fn add_crate_to_index(top_dir_path: &str, crat: &Version) -> Result<()> {
     fs::write(crate_path, crate_version_info).map_err(|e| Error::AddCrateToIndex {
         crate_name: crat.name().to_string(),
         crate_version: crat.version().to_string(),
-        msg: "failed to write crate version information to disk".to_string(),
+        msg: "failed to write crate version information to file".to_string(),
         error: Box::new(e),
     })?;
 
@@ -263,7 +266,7 @@ async fn download_crates(
 
 async fn download_crate(name: &str, version: &str) -> Result<bytes::Bytes> {
     const DL_URL: &'static str = "https://static.crates.io/crates";
-    let crate_url = format!("{DL_URL}/{}/{}-{}.crate", name, name, version);
+    let crate_url = format!("{DL_URL}/{name}/{name}-{version}.crate");
 
     let response = reqwest::get(crate_url)
         .await
@@ -281,7 +284,7 @@ async fn download_crate(name: &str, version: &str) -> Result<bytes::Bytes> {
     bytes
 }
 
-fn write_crate_file(
+fn add_crate_to_registry(
     registry_dir_path: &str,
     name: &str,
     version: &str,
