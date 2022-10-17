@@ -16,9 +16,10 @@ fn try_main() -> anyhow::Result<()> {
     let src_registry = SrcRegistry::new(&index)?;
     let dst_registry = DstRegistry::new("./offline_registry")?;
 
-    let most_downloaded = top_level_builder.get_n_most_downloaded(50)?;
+    //let most_downloaded = top_level_builder.get_n_most_downloaded(50)?;
     let handpicked = top_level_builder.get_handpicked()?;
-    let mut crates = HashSet::from_iter(most_downloaded.into_iter().chain(handpicked.into_iter()));
+    //let mut crates = HashSet::from_iter(most_downloaded.into_iter().chain(handpicked.into_iter()));
+    let mut crates = HashSet::from_iter(handpicked.into_iter());
 
     let dependencies = src_registry.get_required_dependencies(&crates)?;
     crates.extend(dependencies);

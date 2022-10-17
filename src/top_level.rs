@@ -102,8 +102,8 @@ impl<'i> TopLevelBuilder<'i> {
     }
 
     pub fn get_handpicked(&self) -> Result<Vec<Version>> {
-        let name = "bytes";
-        let version = "1.2.1";
+        let name = "itoa";
+        let version = "1.0.4";
         let crate_version = common::get_crate_version(self.index, name, version)
             .map_err(|e| Error::HandPickedCrateNotFound(e))?;
         Ok(vec![crate_version])

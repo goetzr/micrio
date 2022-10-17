@@ -1,4 +1,5 @@
-- Append crate information to file in index if already exists.
+- Implement more specific rules (1/2/3) for index directories.
+- Write fully qualified path to index/config.json
 
 - Running tests:
       $env:RUST_LOG = "trace"; cargo test -- --nocapture

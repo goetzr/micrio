@@ -1,8 +1,8 @@
 use crate::common::Version;
 use std::collections::HashSet;
 use std::fmt::{self, Display};
-use std::fs;
-use std::io;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::task;
 
@@ -123,10 +123,12 @@ impl DstRegistry {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         // Remove the directory then re-create it so we can start with a clean directory.
         let path = path.as_ref();
-        fs::remove_dir_all(path).map_err(|e| Error::Create {
-            msg: "failed to remove existing directory".to_string(),
-            error: e,
-        })?;
+        if path.exists() {
+            fs::remove_dir_all(path).map_err(|e| Error::Create {
+                msg: "failed to remove existing directory".to_string(),
+                error: e,
+            })?;
+        }
         fs::create_dir(path).map_err(|e| Error::Create {
             msg: "failed to create new directory".to_string(),
             error: e,
@@ -204,45 +206,116 @@ fn add_crates_to_index(top_dir_path: &str, crates: &HashSet<Version>) -> Result<
 }
 
 fn add_crate_to_index(top_dir_path: &str, crat: &Version) -> Result<()> {
-    let dir1_name = crat.name().chars().take(2).collect::<String>();
-    let crate_path = format!("{top_dir_path}/{INDEX_DIR}/{dir1_name}");
-    if !Path::new(&crate_path).exists() {
-        fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
-            crate_name: crat.name().to_string(),
-            crate_version: crat.version().to_string(),
-            msg: format!("failed to create {dir1_name} directory"),
-            error: Box::new(e),
-        })?;
-    }
-
-    let dir2_name = crat.name().chars().skip(2).take(2).collect::<String>();
-    let crate_path = format!("{crate_path}/{dir2_name}");
-    if !Path::new(&crate_path).exists() {
-        fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
-            crate_name: crat.name().to_string(),
-            crate_version: crat.version().to_string(),
-            msg: format!("failed to create {dir2_name} directory"),
-            error: Box::new(e),
-        })?;
-    }
-
-    // TODO: If the file already exists, open it and *APPEND* the crate version information!
+    let crate_path = get_crate_index_path(top_dir_path, crat)?;
 
     let crate_path = format!("{crate_path}/{}", crat.name());
+    let mut crate_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(crate_path)
+        .map_err(|e| Error::AddCrateToIndex {
+            crate_name: crat.name().to_string(),
+            crate_version: crat.version().to_string(),
+            msg: "failed to open crate file".to_string(),
+            error: Box::new(e),
+        })?;
+
     let crate_version_info = serde_json::to_string(crat).map_err(|e| Error::AddCrateToIndex {
         crate_name: crat.name().to_string(),
         crate_version: crat.version().to_string(),
         msg: "failed to serialize crate version information to a string".to_string(),
         error: Box::new(e),
     })?;
-    fs::write(crate_path, crate_version_info).map_err(|e| Error::AddCrateToIndex {
-        crate_name: crat.name().to_string(),
-        crate_version: crat.version().to_string(),
-        msg: "failed to write crate version information to file".to_string(),
-        error: Box::new(e),
-    })?;
+
+    crate_file
+        .write_all(crate_version_info.as_bytes())
+        .map_err(|e| Error::AddCrateToIndex {
+            crate_name: crat.name().to_string(),
+            crate_version: crat.version().to_string(),
+            msg: "failed to write crate version information to file".to_string(),
+            error: Box::new(e),
+        })?;
 
     Ok(())
+}
+
+fn get_crate_index_path(top_dir_path: &str, crat: &Version) -> Result<String> {
+    match crat.name().len() {
+        1 => {
+            let crate_path = format!("{top_dir_path}/{INDEX_DIR}/1");
+            if !Path::new(&crate_path).exists() {
+                fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
+                    crate_name: crat.name().to_string(),
+                    crate_version: crat.version().to_string(),
+                    msg: "failed to create '1' directory".to_string(),
+                    error: Box::new(e),
+                })?;
+            }
+            Ok(crate_path)
+        }
+        2 => {
+            let crate_path = format!("{top_dir_path}/{INDEX_DIR}/2");
+            if !Path::new(&crate_path).exists() {
+                fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
+                    crate_name: crat.name().to_string(),
+                    crate_version: crat.version().to_string(),
+                    msg: "failed to create '2' directory".to_string(),
+                    error: Box::new(e),
+                })?;
+            }
+            Ok(crate_path)
+        }
+        3 => {
+            let crate_path = format!("{top_dir_path}/{INDEX_DIR}/3");
+            if !Path::new(&crate_path).exists() {
+                fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
+                    crate_name: crat.name().to_string(),
+                    crate_version: crat.version().to_string(),
+                    msg: "failed to create '3' directory".to_string(),
+                    error: Box::new(e),
+                })?;
+            }
+
+            let crate_path = format!(
+                "{crate_path}/{}",
+                crat.name().chars().take(1).collect::<String>()
+            );
+            if !Path::new(&crate_path).exists() {
+                fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
+                    crate_name: crat.name().to_string(),
+                    crate_version: crat.version().to_string(),
+                    msg: "failed to create crate directory in '3' directory".to_string(),
+                    error: Box::new(e),
+                })?;
+            }
+            Ok(crate_path)
+        }
+        _ => {
+            let dir1_name = crat.name().chars().take(2).collect::<String>();
+            let crate_path = format!("{top_dir_path}/{INDEX_DIR}/{dir1_name}");
+            if !Path::new(&crate_path).exists() {
+                fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
+                    crate_name: crat.name().to_string(),
+                    crate_version: crat.version().to_string(),
+                    msg: format!("failed to create {dir1_name} directory"),
+                    error: Box::new(e),
+                })?;
+            }
+
+            let dir2_name = crat.name().chars().skip(2).take(2).collect::<String>();
+            let crate_path = format!("{crate_path}/{dir2_name}");
+            if !Path::new(&crate_path).exists() {
+                fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
+                    crate_name: crat.name().to_string(),
+                    crate_version: crat.version().to_string(),
+                    msg: format!("failed to create {dir2_name} directory"),
+                    error: Box::new(e),
+                })?;
+            }
+
+            Ok(crate_path)
+        }
+    }
 }
 
 async fn download_crates(
