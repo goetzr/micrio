@@ -1,2 +1,5 @@
+- ALL enabled dependencies, even those that aren't enabled for the current target platform,
+  need to be present in the index portion of the registry.
+
 - Running tests:
       $env:RUST_LOG = "trace"; cargo test -- --nocapture

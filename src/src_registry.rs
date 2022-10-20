@@ -444,7 +444,7 @@ impl<'i> SrcRegistry<'i> {
                     });
                     match result {
                         Some(result) => Ok(result),
-                        None => Ok(true),
+                        None => Ok(false),
                     }
                 } else {
                     // Full target triple specified.

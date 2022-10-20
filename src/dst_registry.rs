@@ -156,7 +156,7 @@ impl DstRegistry {
             } else if rel_path.starts_with(".\\") {
                 rel_path = path.strip_prefix(".\\").unwrap();
             }
-               
+
             let cur_dir = env::current_dir().map_err(|e| Error::Create {
                 msg: "failed to get current directory to make absolute path".to_string(),
                 error: e,
@@ -164,7 +164,7 @@ impl DstRegistry {
             path = cur_dir.join(&rel_path);
         }
         path = PathBuf::from_str(path.to_string_lossy().replace("\\", "/").as_str()).unwrap();
-        
+
         // Remove the directory then re-create it so we can start with a clean directory.
         if path.exists() {
             fs::remove_dir_all(&path).map_err(|e| Error::Create {
@@ -427,27 +427,6 @@ fn commit_git_repo(repo: &Repository, index: &mut git2::Index) -> Result<()> {
     Ok(())
 }
 
-fn find_last_commit(repo: &Repository) -> Result<git2::Commit> {
-    /*let obj = repo
-    .head()
-    .map_err(|e| Error::CommitGitRepo(e))?
-    .resolve()
-    .map_err(|e| Error::CommitGitRepo(e))?
-    .peel(git2::ObjectType::Commit)
-    .map_err(|e| Error::CommitGitRepo(e))?;*/
-    println!("find_last_commit");
-    let head = repo.head().map_err(|e| Error::CommitGitRepo(e))?;
-    println!("s1");
-    let s2 = head.resolve().map_err(|e| Error::CommitGitRepo(e))?;
-    println!("s2");
-    let obj = s2
-        .peel(git2::ObjectType::Commit)
-        .map_err(|e| Error::CommitGitRepo(e))?;
-    println!("obj");
-    obj.into_commit()
-        .map_err(|_| Error::CommitGitRepo(git2::Error::from_str("Couldn't find last commit")))
-}
-
 async fn download_crates(
     crates: Vec<Version>,
 ) -> Vec<std::result::Result<Result<bytes::Bytes>, task::JoinError>> {
@@ -494,12 +473,14 @@ fn add_crate_to_registry(
     file_contents: bytes::Bytes,
 ) -> Result<()> {
     let crate_dir_path = format!("{registry_dir_path}/{name}");
-    fs::create_dir(&crate_dir_path).map_err(|e| Error::WriteRegistryFile {
-        crate_name: name.to_string(),
-        crate_version: version.to_string(),
-        msg: format!("failed to create {name} directory"),
-        error: e,
-    })?;
+    if !Path::new(&crate_dir_path).exists() {
+        fs::create_dir(&crate_dir_path).map_err(|e| Error::WriteRegistryFile {
+            crate_name: name.to_string(),
+            crate_version: version.to_string(),
+            msg: format!("failed to create {name} directory"),
+            error: e,
+        })?;
+    }
     let crate_dir_path = format!("{crate_dir_path}/{version}");
     fs::create_dir(&crate_dir_path).map_err(|e| Error::WriteRegistryFile {
         crate_name: name.to_string(),
