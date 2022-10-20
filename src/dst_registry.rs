@@ -6,6 +6,7 @@ use std::fmt::{self, Display};
 use std::fs::{self, DirEntry, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use tokio::task;
 
 #[derive(Debug)]
@@ -145,15 +146,25 @@ pub struct DstRegistry {
 impl DstRegistry {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut path = path.as_ref().to_path_buf();
+
+        // Ensure the path to the destination registry is an absolute path
+        // with forward slashes separating the components.
         if !path.is_absolute() {
-            let path = path.strip_prefix(".")
+            let mut rel_path = path.as_path();
+            if rel_path.starts_with("./") {
+                rel_path = path.strip_prefix("./").unwrap();
+            } else if rel_path.starts_with(".\\") {
+                rel_path = path.strip_prefix(".\\").unwrap();
+            }
+               
             let cur_dir = env::current_dir().map_err(|e| Error::Create {
                 msg: "failed to get current directory to make absolute path".to_string(),
                 error: e,
             })?;
-            path = cur_dir.join(&path);
+            path = cur_dir.join(&rel_path);
         }
-        println!("Destination registry path = {}", path.to_string_lossy());
+        path = PathBuf::from_str(path.to_string_lossy().replace("\\", "/").as_str()).unwrap();
+        
         // Remove the directory then re-create it so we can start with a clean directory.
         if path.exists() {
             fs::remove_dir_all(&path).map_err(|e| Error::Create {

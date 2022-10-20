@@ -1,4 +1,2 @@
-- Write fully qualified path to index/config.json
-
 - Running tests:
       $env:RUST_LOG = "trace"; cargo test -- --nocapture
