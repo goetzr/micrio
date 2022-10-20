@@ -1,7 +1,9 @@
 use crate::common::Version;
+use git2::Repository;
 use std::collections::HashSet;
+use std::env;
 use std::fmt::{self, Display};
-use std::fs::{self, OpenOptions};
+use std::fs::{self, DirEntry, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::task;
@@ -13,6 +15,7 @@ pub enum Error {
         error: io::Error,
     },
     CreateIndexDir(io::Error),
+    InitGitRepo(git2::Error),
     WriteConfigJson(io::Error),
     AddCrateToIndex {
         crate_name: String,
@@ -20,6 +23,8 @@ pub enum Error {
         msg: String,
         error: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
+    AddFileToGitRepo(Box<dyn std::error::Error + Send + Sync + 'static>),
+    CommitGitRepo(git2::Error),
     CreateRegistryDir(io::Error),
     CreateRuntime(io::Error),
     DownloadCrate {
@@ -50,6 +55,12 @@ impl Display for Error {
                     "error populating index: failed to create the index directory: {e}"
                 )
             }
+            Error::InitGitRepo(e) => {
+                write!(
+                    f,
+                    "error populating index: failed to initialize git repo: {e}"
+                )
+            }
             Error::WriteConfigJson(e) => {
                 write!(
                     f,
@@ -66,6 +77,15 @@ impl Display for Error {
                     f,
                     "error populating index: failed to add {crate_name} version {crate_version} to the index: {msg}: {error}"
                 )
+            }
+            Error::AddFileToGitRepo(e) => {
+                write!(
+                    f,
+                    "error populating index: failed to add file to git repo: {e}"
+                )
+            }
+            Error::CommitGitRepo(e) => {
+                write!(f, "error populating index: failed to commit git repo: {e}")
             }
             Error::CreateRegistryDir(e) => {
                 write!(
@@ -100,8 +120,11 @@ impl std::error::Error for Error {
         match self {
             Error::Create { error, .. } => Some(error),
             Error::CreateIndexDir(e) => Some(e),
+            Error::InitGitRepo(e) => Some(e),
             Error::WriteConfigJson(e) => Some(e),
             Error::AddCrateToIndex { error, .. } => Some(error.as_ref()),
+            Error::AddFileToGitRepo(e) => Some(e.as_ref()),
+            Error::CommitGitRepo(e) => Some(e),
             Error::CreateRegistryDir(e) => Some(e),
             Error::CreateRuntime(e) => Some(e),
             Error::DownloadCrate { error, .. } => Some(error.as_ref()),
@@ -121,21 +144,28 @@ pub struct DstRegistry {
 
 impl DstRegistry {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let mut path = path.as_ref().to_path_buf();
+        if !path.is_absolute() {
+            let path = path.strip_prefix(".")
+            let cur_dir = env::current_dir().map_err(|e| Error::Create {
+                msg: "failed to get current directory to make absolute path".to_string(),
+                error: e,
+            })?;
+            path = cur_dir.join(&path);
+        }
+        println!("Destination registry path = {}", path.to_string_lossy());
         // Remove the directory then re-create it so we can start with a clean directory.
-        let path = path.as_ref();
         if path.exists() {
-            fs::remove_dir_all(path).map_err(|e| Error::Create {
+            fs::remove_dir_all(&path).map_err(|e| Error::Create {
                 msg: "failed to remove existing directory".to_string(),
                 error: e,
             })?;
         }
-        fs::create_dir(path).map_err(|e| Error::Create {
+        fs::create_dir(&path).map_err(|e| Error::Create {
             msg: "failed to create new directory".to_string(),
             error: e,
         })?;
-        Ok(DstRegistry {
-            path: path.to_path_buf(),
-        })
+        Ok(DstRegistry { path })
     }
 
     pub fn populate(&self, crates: &HashSet<Version>) -> Result<()> {
@@ -148,10 +178,12 @@ impl DstRegistry {
 
 fn populate_index(top_dir_path: &str, crates: &HashSet<Version>) -> Result<()> {
     let index_dir_path = format!("{top_dir_path}/{INDEX_DIR}");
-    fs::create_dir(index_dir_path).map_err(|e| Error::CreateIndexDir(e))?;
+    fs::create_dir(&index_dir_path).map_err(|e| Error::CreateIndexDir(e))?;
 
+    let repo = create_git_repo(&index_dir_path)?;
     write_config_json_file(top_dir_path)?;
     add_crates_to_index(top_dir_path, &crates)?;
+    add_files_to_git_repo(&index_dir_path, &repo)?;
 
     Ok(())
 }
@@ -184,6 +216,10 @@ fn populate_registry(top_dir_path: &str, crates: &HashSet<Version>) -> Result<()
     }
 
     Ok(())
+}
+
+fn create_git_repo(index_dir_path: &str) -> Result<Repository> {
+    Repository::init(index_dir_path).map_err(|e| Error::InitGitRepo(e))
 }
 
 fn write_config_json_file(top_dir_path: &str) -> Result<()> {
@@ -316,6 +352,89 @@ fn get_crate_index_path(top_dir_path: &str, crat: &Version) -> Result<String> {
             Ok(crate_path)
         }
     }
+}
+
+fn add_files_to_git_repo(index_dir_path: &str, repo: &Repository) -> Result<()> {
+    let mut index = repo
+        .index()
+        .map_err(|e| Error::AddFileToGitRepo(Box::new(e)))?;
+    let entries = fs::read_dir(index_dir_path).map_err(|e| Error::AddFileToGitRepo(Box::new(e)))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| Error::AddFileToGitRepo(Box::new(e)))?;
+        add_file_to_git_repo(index_dir_path, &mut index, &entry)
+            .map_err(|e| Error::AddFileToGitRepo(Box::new(e)))?;
+    }
+    index
+        .write()
+        .map_err(|e| Error::AddFileToGitRepo(Box::new(e)))?;
+    commit_git_repo(repo, &mut index)?;
+    Ok(())
+}
+
+fn add_file_to_git_repo(
+    index_dir_path: &str,
+    index: &mut git2::Index,
+    entry: &DirEntry,
+) -> Result<()> {
+    let metadata = entry
+        .metadata()
+        .map_err(|e| Error::AddFileToGitRepo(Box::new(e)))?;
+    if metadata.is_file() {
+        let path = pathdiff::diff_paths(entry.path(), index_dir_path).unwrap();
+        index
+            .add_path(&path)
+            .map_err(|e| Error::AddFileToGitRepo(Box::new(e)))?;
+    } else if metadata.is_dir() {
+        if entry.file_name() != ".git" {
+            let entries =
+                fs::read_dir(entry.path()).map_err(|e| Error::AddFileToGitRepo(Box::new(e)))?;
+            for entry in entries {
+                let entry = entry.map_err(|e| Error::AddFileToGitRepo(Box::new(e)))?;
+                add_file_to_git_repo(index_dir_path, index, &entry)?
+            }
+        }
+    }
+    Ok(())
+}
+
+fn commit_git_repo(repo: &Repository, index: &mut git2::Index) -> Result<()> {
+    let oid = index.write_tree().map_err(|e| Error::CommitGitRepo(e))?;
+    let signature = git2::Signature::now("Russ Goetz", "russgoetz@gmail.com")
+        .map_err(|e| Error::CommitGitRepo(e))?;
+    //let parent_commit = find_last_commit(&repo)?;
+    let tree = repo.find_tree(oid).map_err(|e| Error::CommitGitRepo(e))?;
+    repo.commit(
+        Some("HEAD"),     //  point HEAD to our new commit
+        &signature,       // author
+        &signature,       // committer
+        "Initial commit", // commit message
+        &tree,            // tree
+        &[],
+        //&[&parent_commit],
+    )
+    .map_err(|e| Error::CommitGitRepo(e))?; // parents
+    Ok(())
+}
+
+fn find_last_commit(repo: &Repository) -> Result<git2::Commit> {
+    /*let obj = repo
+    .head()
+    .map_err(|e| Error::CommitGitRepo(e))?
+    .resolve()
+    .map_err(|e| Error::CommitGitRepo(e))?
+    .peel(git2::ObjectType::Commit)
+    .map_err(|e| Error::CommitGitRepo(e))?;*/
+    println!("find_last_commit");
+    let head = repo.head().map_err(|e| Error::CommitGitRepo(e))?;
+    println!("s1");
+    let s2 = head.resolve().map_err(|e| Error::CommitGitRepo(e))?;
+    println!("s2");
+    let obj = s2
+        .peel(git2::ObjectType::Commit)
+        .map_err(|e| Error::CommitGitRepo(e))?;
+    println!("obj");
+    obj.into_commit()
+        .map_err(|_| Error::CommitGitRepo(git2::Error::from_str("Couldn't find last commit")))
 }
 
 async fn download_crates(
