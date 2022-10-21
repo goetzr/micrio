@@ -2,24 +2,41 @@ mod common;
 mod top_level;
 mod src_registry;
 mod dst_registry;
+mod cli;
 
 use top_level::TopLevelBuilder;
 use src_registry::SrcRegistry;
 use dst_registry::DstRegistry;
 use std::collections::HashSet;
 use log::error;
+use cli::Cli;
+use clap::Parser;
 
 fn try_main() -> anyhow::Result<()> {
     env_logger::init();
+
+    let cli = Cli::parse();
+
     let index = crates_index::Index::new_cargo_default()?;
     let top_level_builder = TopLevelBuilder::new(&index)?;
     let src_registry = SrcRegistry::new(&index)?;
-    let dst_registry = DstRegistry::new("./offline_registry")?;
+    let dst_registry = DstRegistry::new(cli.dst_registry_path)?;
 
-    //let most_downloaded = top_level_builder.get_n_most_downloaded(50)?;
-    let handpicked = top_level_builder.get_handpicked()?;
-    //let mut crates = HashSet::from_iter(most_downloaded.into_iter().chain(handpicked.into_iter()));
-    let mut crates = HashSet::from_iter(handpicked.into_iter());
+    let mut crates = HashSet::new();
+    match cli.from_file {
+        Some(file_path) => crates.extend(top_level_builder.from_file(file_path)?),
+        None => (0),
+    };
+
+    match cli.most_downloaded {
+        Some(n) => crates.extend(top_level_builder.get_n_most_downloaded(n)),
+        None => (),
+    };
+
+    if crates.is_empty() {
+        println!("ERROR: no crates selected");
+        std::process::exit(1);
+    }
 
     let dependencies = src_registry.get_required_dependencies(&crates)?;
     crates.extend(dependencies);
