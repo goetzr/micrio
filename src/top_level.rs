@@ -103,8 +103,8 @@ impl<'i> TopLevelBuilder<'i> {
     }
 
     pub fn get_handpicked(&self) -> Result<Vec<Version>> {
-        let name = "indexmap";
-        let version = "1.9.1";
+        let name = "tokio";
+        let version = "1.21.2";
         let crate_version = common::get_crate_version(self.index, name, version)
             .map_err(|e| Error::HandPickedCrateNotFound(e))?
             .download(true);

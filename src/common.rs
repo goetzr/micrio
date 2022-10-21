@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
 use std::hash::{Hash, Hasher};
-use serde::Serialize;
 
 pub const TARGET_TRIPLE: &'static str = "x86_64-pc-windows-msvc";
 pub const DEFAULT_FEATURE: &'static str = "default";
@@ -17,6 +16,7 @@ pub enum Error {
         crate_name: String,
         crate_version: String,
     },
+    SerializeVersion(serde_json::Error),
 }
 
 impl Display for Error {
@@ -35,15 +35,26 @@ impl Display for Error {
                     crate_name, crate_version
                 )
             }
+            Error::SerializeVersion(e) => {
+                write!(f, "failed to serialize to JSON: {e}")
+            }
         }
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self {
+            Error::CrateNotFound { .. } => None,
+            Error::CrateVersionNotFound { .. } => None,
+            Error::SerializeVersion(e) => Some(e),
+        }
+    }
+}
 
 type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone)]
 pub struct Version {
     pub version: crates_index::Version,
     pub download: bool,
@@ -57,6 +68,10 @@ impl Version {
     pub fn download(mut self, flag: bool) -> Self {
         self.download = flag;
         self
+    }
+
+    pub fn to_json(&self) -> Result<String> {
+        serde_json::to_string(&self.version).map_err(|e| Error::SerializeVersion(e))
     }
 
     pub fn name(&self) -> &str {

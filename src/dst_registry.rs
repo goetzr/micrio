@@ -267,12 +267,14 @@ fn add_crate_to_index(top_dir_path: &str, crat: &Version) -> Result<()> {
             error: Box::new(e),
         })?;
 
-    let crate_version_info = serde_json::to_string(crat).map_err(|e| Error::AddCrateToIndex {
+    let mut crate_version_info = crat.to_json().map_err(|e| Error::AddCrateToIndex {
         crate_name: crat.name().to_string(),
         crate_version: crat.version().to_string(),
         msg: "failed to serialize crate version information to a string".to_string(),
         error: Box::new(e),
     })?;
+    crate_version_info += "\n";
+
 
     crate_file
         .write_all(crate_version_info.as_bytes())

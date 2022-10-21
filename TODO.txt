@@ -1,7 +1,2 @@
-- Because common::Version is now a structure with a 'version' and 'download' member,
-  it's serializing all this information to the version file in the index.
-  We only want to serialize the 'version' member.
-  Make sure it doesn't add the 'version' take to the serialized JSON.
-
 - Running tests:
       $env:RUST_LOG = "trace"; cargo test -- --nocapture
