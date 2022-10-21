@@ -2,7 +2,7 @@ use crate::common::{self, Version};
 use cfg_expr::{targets::get_builtin_target_by_triple, targets::TargetInfo, Expression, Predicate};
 use crates_index::DependencyKind;
 use log::{trace, warn};
-use std::{collections::{HashMap, HashSet, VecDeque}};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{self, Display};
 
 #[derive(Debug)]
@@ -47,7 +47,11 @@ impl Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Error::Create => {
-                write!(f, "failed to create source registry: target triple {} not found", common::TARGET_TRIPLE)
+                write!(
+                    f,
+                    "failed to create source registry: target triple {} not found",
+                    common::TARGET_TRIPLE
+                )
             }
             Error::CrateNotFound(e) => {
                 write!(f, "failed to get crate: {e}")
@@ -160,8 +164,7 @@ pub struct SrcRegistry<'i> {
 
 impl<'i> SrcRegistry<'i> {
     pub fn new(index: &'i crates_index::Index) -> Result<Self> {
-        let target = get_builtin_target_by_triple(common::TARGET_TRIPLE)
-            .ok_or(Error::Create)?;
+        let target = get_builtin_target_by_triple(common::TARGET_TRIPLE).ok_or(Error::Create)?;
         Ok(SrcRegistry { index, target })
     }
 
@@ -195,15 +198,24 @@ impl<'i> SrcRegistry<'i> {
                 .iter()
                 .filter(|d| d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
             {
-                if !self.dependency_enabled_for_target(crate_version, dependency)? {
+                let dep_enabled_for_tgt =
+                    self.dependency_enabled_for_target(crate_version, dependency)?;
+                if !dep_enabled_for_tgt {
                     trace!(
-                        "{} version {}: {} dependency not enabled for this target",
-                        crate_version.name(),
-                        crate_version.version(),
-                        dependency.name()
+                        "{} version {}: dependency {} marked as no-download b/c not enabled for target platform",
+                        crate_version.name().to_string(),
+                        crate_version.version().to_string(),
+                        dependency.name().to_string(),
                     );
+                    self.add_dependency(
+                        crate_version,
+                        dependency,
+                        false, // download = false
+                        &mut required_dependencies,
+                    )?;
                     continue;
                 }
+
                 // NOTE: All optional dependencies of top-level crates are force-enabled.
                 if dependency.is_optional() {
                     let enabled_features = get_enabled_features_for_optional_dependency(
@@ -226,6 +238,7 @@ impl<'i> SrcRegistry<'i> {
                         let dep_crate_version = self.add_dependency(
                             crate_version,
                             dependency,
+                            true, // download = true
                             &mut required_dependencies,
                         )?;
                         enabled_dependencies.push(EnabledDependency::new(
@@ -256,8 +269,12 @@ impl<'i> SrcRegistry<'i> {
                         dependency.name(),
                         &enabled_features.join(",")
                     );
-                    let dep_crate_version =
-                        self.add_dependency(crate_version, dependency, &mut required_dependencies)?;
+                    let dep_crate_version = self.add_dependency(
+                        crate_version,
+                        dependency,
+                        true, // download = true
+                        &mut required_dependencies,
+                    )?;
                     enabled_dependencies.push(EnabledDependency::new(
                         dep_crate_version,
                         enabled_features,
@@ -322,15 +339,24 @@ impl<'i> SrcRegistry<'i> {
             .iter()
             .filter(|d| d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
         {
-            if !self.dependency_enabled_for_target(&crate_version, dependency)? {
+            let dep_enabled_for_tgt =
+                self.dependency_enabled_for_target(&crate_version, dependency)?;
+            if !dep_enabled_for_tgt {
                 trace!(
-                    "{} version {}: {} dependency not enabled for this target",
-                    crate_version.name(),
-                    crate_version.version(),
-                    dependency.name()
+                    "{} version {}: dependency {} marked as no-download b/c not enabled for target platform",
+                    crate_version.name().to_string(),
+                    crate_version.version().to_string(),
+                    dependency.name().to_string(),
                 );
+                self.add_dependency(
+                    &crate_version,
+                    dependency,
+                    false, // download = false
+                    required_dependencies,
+                )?;
                 continue;
             }
+
             if dependency.is_optional() {
                 let enabled_features = get_enabled_features_for_optional_dependency(
                     &crate_version,
@@ -348,8 +374,12 @@ impl<'i> SrcRegistry<'i> {
                         dependency.name(),
                         &enabled_features.join(",")
                     );
-                    let dep_crate_version =
-                        self.add_dependency(&crate_version, dependency, required_dependencies)?;
+                    let dep_crate_version = self.add_dependency(
+                        &crate_version,
+                        dependency,
+                        true, // download = true
+                        required_dependencies,
+                    )?;
                     enabled_dependencies.push(EnabledDependency::new(
                         dep_crate_version,
                         enabled_features,
@@ -370,8 +400,12 @@ impl<'i> SrcRegistry<'i> {
                     dependency.name(),
                     &enabled_features.join(",")
                 );
-                let dep_crate_version =
-                    self.add_dependency(&crate_version, dependency, required_dependencies)?;
+                let dep_crate_version = self.add_dependency(
+                    &crate_version,
+                    dependency,
+                    true, // download = true
+                    required_dependencies,
+                )?;
                 enabled_dependencies.push(EnabledDependency::new(
                     dep_crate_version,
                     enabled_features,
@@ -396,12 +430,14 @@ impl<'i> SrcRegistry<'i> {
         &self,
         crate_version: &Version,
         dependency: &crates_index::Dependency,
+        download: bool,
         required_dependencies: &mut HashSet<Version>,
     ) -> Result<Version> {
-        let dep_crate = common::get_crate(self.index, dependency.crate_name()).map_err(|e| Error::CrateNotFound(e))?;
+        let dep_crate = common::get_crate(self.index, dependency.crate_name())
+            .map_err(|e| Error::CrateNotFound(e))?;
         let dep_crate_version =
             get_dependency_crate_version(crate_version, dependency, &dep_crate)?;
-        let dep_crate_version = Version(dep_crate_version.clone());
+        let dep_crate_version = Version::new(dep_crate_version.clone()).download(download);
         required_dependencies.insert(dep_crate_version.clone());
         Ok(dep_crate_version)
     }
@@ -472,12 +508,11 @@ fn get_dependency_crate_version<'a>(
     })?;
     for dep_crate_version in dep_crate.versions().iter().rev().filter(|c| !c.is_yanked()) {
         let version_str = dep_crate_version.version();
-        let version =
-            semver::Version::parse(version_str).map_err(|e| Error::SemVerVersion {
-                crate_name: dep_crate.name().to_string(),
-                crate_version: version_str.to_string(),
-                error: e,
-            })?;
+        let version = semver::Version::parse(version_str).map_err(|e| Error::SemVerVersion {
+            crate_name: dep_crate.name().to_string(),
+            crate_version: version_str.to_string(),
+            error: e,
+        })?;
         if version_req.matches(&version) {
             return Ok(dep_crate_version);
         }
@@ -652,14 +687,13 @@ fn get_enabled_features_for_optional_dependency(
     let mut dependency_enabled = force_enable;
 
     while let Some(feature_under_exam) = features_to_examine.pop_front() {
-        let entries =
-            features_table
-                .get(&feature_under_exam)
-                .ok_or(Error::FeatureNotFound {
-                    crate_name: crate_version.name().to_string(),
-                    crate_version: crate_version.version().to_string(),
-                    feature_name: feature_under_exam,
-                })?;
+        let entries = features_table
+            .get(&feature_under_exam)
+            .ok_or(Error::FeatureNotFound {
+                crate_name: crate_version.name().to_string(),
+                crate_version: crate_version.version().to_string(),
+                feature_name: feature_under_exam,
+            })?;
         for entry in entries {
             match entry {
                 FeatureTableEntry::Feature(feature) => {
@@ -712,14 +746,13 @@ fn get_enabled_features_for_dependency(
     let mut features_to_examine = VecDeque::from_iter(enabled_crate_features.iter().cloned());
 
     while let Some(feature_under_exam) = features_to_examine.pop_front() {
-        let entries =
-            features_table
-                .get(&feature_under_exam)
-                .ok_or(Error::FeatureNotFound {
-                    crate_name: crate_version.name().to_string(),
-                    crate_version: crate_version.version().to_string(),
-                    feature_name: feature_under_exam,
-                })?;
+        let entries = features_table
+            .get(&feature_under_exam)
+            .ok_or(Error::FeatureNotFound {
+                crate_name: crate_version.name().to_string(),
+                crate_version: crate_version.version().to_string(),
+                feature_name: feature_under_exam,
+            })?;
         for entry in entries {
             match entry {
                 FeatureTableEntry::Feature(feature) => {

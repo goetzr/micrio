@@ -90,7 +90,8 @@ impl<'i> TopLevelBuilder<'i> {
             for crat in page.crates {
                 let crate_version =
                     common::get_crate_version(self.index, &crat.name, &crat.max_version)
-                        .map_err(|e| Error::MostDownloadedCrateNotFound(e))?;
+                        .map_err(|e| Error::MostDownloadedCrateNotFound(e))?
+                        .download(true);
                 most_downloaded.push(crate_version);
             }
         }
@@ -102,10 +103,11 @@ impl<'i> TopLevelBuilder<'i> {
     }
 
     pub fn get_handpicked(&self) -> Result<Vec<Version>> {
-        let name = "tokio";
-        let version = "1.21.2";
+        let name = "indexmap";
+        let version = "1.9.1";
         let crate_version = common::get_crate_version(self.index, name, version)
-            .map_err(|e| Error::HandPickedCrateNotFound(e))?;
+            .map_err(|e| Error::HandPickedCrateNotFound(e))?
+            .download(true);
         Ok(vec![crate_version])
     }
 }
