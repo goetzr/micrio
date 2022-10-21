@@ -198,24 +198,7 @@ impl<'i> SrcRegistry<'i> {
                 .iter()
                 .filter(|d| d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
             {
-                let dep_enabled_for_tgt =
-                    self.dependency_enabled_for_target(crate_version, dependency)?;
-                if !dep_enabled_for_tgt {
-                    trace!(
-                        "{} version {}: dependency {} marked as no-download b/c not enabled for target platform",
-                        crate_version.name().to_string(),
-                        crate_version.version().to_string(),
-                        dependency.name().to_string(),
-                    );
-                    self.add_dependency(
-                        crate_version,
-                        dependency,
-                        false, // download = false
-                        &mut required_dependencies,
-                    )?;
-                    continue;
-                }
-
+                let download = self.dependency_enabled_for_target(crate_version, dependency)?;
                 // NOTE: All optional dependencies of top-level crates are force-enabled.
                 if dependency.is_optional() {
                     let enabled_features = get_enabled_features_for_optional_dependency(
@@ -238,7 +221,7 @@ impl<'i> SrcRegistry<'i> {
                         let dep_crate_version = self.add_dependency(
                             crate_version,
                             dependency,
-                            true, // download = true
+                            download,
                             &mut required_dependencies,
                         )?;
                         enabled_dependencies.push(EnabledDependency::new(
@@ -272,7 +255,7 @@ impl<'i> SrcRegistry<'i> {
                     let dep_crate_version = self.add_dependency(
                         crate_version,
                         dependency,
-                        true, // download = true
+                        download,
                         &mut required_dependencies,
                     )?;
                     enabled_dependencies.push(EnabledDependency::new(
@@ -339,24 +322,10 @@ impl<'i> SrcRegistry<'i> {
             .iter()
             .filter(|d| d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
         {
-            let dep_enabled_for_tgt =
-                self.dependency_enabled_for_target(&crate_version, dependency)?;
-            if !dep_enabled_for_tgt {
-                trace!(
-                    "{} version {}: dependency {} marked as no-download b/c not enabled for target platform",
-                    crate_version.name().to_string(),
-                    crate_version.version().to_string(),
-                    dependency.name().to_string(),
-                );
-                self.add_dependency(
-                    &crate_version,
-                    dependency,
-                    false, // download = false
-                    required_dependencies,
-                )?;
-                continue;
-            }
-
+            // If the parent crate should not be downloaded, neither should
+            // any of its dependencies.
+            let download = crate_version.download
+                && self.dependency_enabled_for_target(&crate_version, dependency)?;
             if dependency.is_optional() {
                 let enabled_features = get_enabled_features_for_optional_dependency(
                     &crate_version,
@@ -377,7 +346,7 @@ impl<'i> SrcRegistry<'i> {
                     let dep_crate_version = self.add_dependency(
                         &crate_version,
                         dependency,
-                        true, // download = true
+                        download,
                         required_dependencies,
                     )?;
                     enabled_dependencies.push(EnabledDependency::new(
@@ -403,7 +372,7 @@ impl<'i> SrcRegistry<'i> {
                 let dep_crate_version = self.add_dependency(
                     &crate_version,
                     dependency,
-                    true, // download = true
+                    download,
                     required_dependencies,
                 )?;
                 enabled_dependencies.push(EnabledDependency::new(
