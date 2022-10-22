@@ -20,21 +20,21 @@ fn try_main() -> anyhow::Result<()> {
     let index = crates_index::Index::new_cargo_default()?;
     let top_level_builder = TopLevelBuilder::new(&index)?;
     let src_registry = SrcRegistry::new(&index)?;
-    let dst_registry = DstRegistry::new(cli.dst_registry_path)?;
+    let dst_registry = DstRegistry::new(&cli.mirror_dir_path)?;
 
     let mut crates = HashSet::new();
     match cli.from_file {
         Some(file_path) => crates.extend(top_level_builder.from_file(file_path)?),
-        None => (0),
+        None => (),
     };
-
     match cli.most_downloaded {
-        Some(n) => crates.extend(top_level_builder.get_n_most_downloaded(n)),
+        Some(n) => crates.extend(top_level_builder.get_n_most_downloaded(n)?),
         None => (),
     };
 
     if crates.is_empty() {
-        println!("ERROR: no crates selected");
+        println!("ERROR: no crates selected to mirror");
+        cli.print_help();
         std::process::exit(1);
     }
 
