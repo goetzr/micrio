@@ -1,10 +1,10 @@
 use crate::common::{self, Version};
 use crates_io_api::{CratesQuery, Sort, SyncClient};
+use log::warn;
 use std::fmt::{self, Display};
 use std::fs::File;
-use std::io::{BufReader, BufRead};
+use std::io::{BufRead, BufReader};
 use std::path::Path;
-use log::warn;
 
 #[derive(Debug)]
 pub enum Error {
@@ -92,11 +92,19 @@ impl<'i> TopLevelBuilder<'i> {
             query.set_page(page_index + 1);
             let page = self.client.crates(query.clone())?;
             for crat in page.crates {
-                let crate_version =
-                    common::get_crate_version(self.index, &crat.name, &crat.max_version)
-                        .map_err(|e| Error::MostDownloadedCrateNotFound(e))?
-                        .download(true);
-                most_downloaded.push(crate_version);
+                let crat = common::get_crate(self.index, &crat.name)
+                    .map_err(|e| Error::MostDownloadedCrateNotFound(e))?;
+                let version = crat.highest_normal_version();
+                if version.is_none() {
+                    // No versions available for this crate. Skip over it.
+                    warn!(
+                        "no versions available for the most downloaded crate {}",
+                        crat.name()
+                    );
+                    continue;
+                }
+                let version = common::Version::new(version.unwrap().clone()).download(true);
+                most_downloaded.push(version);
             }
         }
 
@@ -107,18 +115,22 @@ impl<'i> TopLevelBuilder<'i> {
     }
 
     pub fn from_file<P: AsRef<Path>>(&self, file_path: P) -> Result<Vec<Version>> {
-        let file = BufReader::new(File::open(&file_path).map_err(|e| Error::FromFile(Box::new(e)))?);
+        let file =
+            BufReader::new(File::open(&file_path).map_err(|e| Error::FromFile(Box::new(e)))?);
         let mut crates = Vec::new();
         for line in file.lines() {
             let crate_name = line.map_err(|e| Error::FromFile(Box::new(e)))?;
-            let crat = common::get_crate(self.index, &crate_name).map_err(|e| Error::FromFile(Box::new(e)))?;
+            let crat = common::get_crate(self.index, &crate_name)
+                .map_err(|e| Error::FromFile(Box::new(e)))?;
             let version = crat.highest_normal_version();
             if version.is_none() {
                 // No versions available for this crate. Skip over it.
                 let file_path = file_path.as_ref();
-                warn!("no versions available for the {crate_name} crate in the {} file",
-                    file_path.to_string_lossy());
-                continue
+                warn!(
+                    "no versions available for the {crate_name} crate in the {} file",
+                    file_path.to_string_lossy()
+                );
+                continue;
             }
             let version = common::Version::new(version.unwrap().clone()).download(true);
             crates.push(version);

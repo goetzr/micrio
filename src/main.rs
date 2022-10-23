@@ -1,16 +1,16 @@
-mod common;
-mod top_level;
-mod src_registry;
-mod dst_registry;
 mod cli;
+mod common;
+mod dst_registry;
+mod src_registry;
+mod top_level;
 
-use top_level::TopLevelBuilder;
-use src_registry::SrcRegistry;
-use dst_registry::DstRegistry;
-use std::collections::HashSet;
-use log::error;
+use clap::{CommandFactory, Parser};
 use cli::Cli;
-use clap::Parser;
+use dst_registry::DstRegistry;
+use log::error;
+use src_registry::SrcRegistry;
+use std::collections::HashSet;
+use top_level::TopLevelBuilder;
 
 fn try_main() -> anyhow::Result<()> {
     env_logger::init();
@@ -33,20 +33,27 @@ fn try_main() -> anyhow::Result<()> {
     };
 
     if crates.is_empty() {
-        println!("ERROR: no crates selected to mirror");
-        cli.print_help();
+        println!("ERROR: no crates selected to mirror\n");
+        Cli::command().print_help()?;
         std::process::exit(1);
     }
 
+    println!("{} top level crates selected.", crates.len());
+    print!("Getting required dependencies...");
     let dependencies = src_registry.get_required_dependencies(&crates)?;
+    let tot_num_deps = dependencies.len();
+    let num_deps_dl = dependencies.iter().filter(|d| d.download).count();
     crates.extend(dependencies);
+    println!("done");
+    println!(
+        "{} total dependencies identified, {} of these must be downloaded.",
+        tot_num_deps, num_deps_dl
+    );
 
+    println!("Populating local registry...");
     dst_registry.populate(&crates)?;
+    println!("Done populating local registry.");
 
-    for crat in &crates {
-        println!("{} version {}", crat.name(), crat.version());
-    }
-    
     Ok(())
 }
 

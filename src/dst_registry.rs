@@ -433,7 +433,7 @@ async fn download_crates(
     crates: Vec<Version>,
 ) -> Vec<std::result::Result<Result<bytes::Bytes>, task::JoinError>> {
     let mut handles = Vec::new();
-    for crat in crates {
+    for crat in &crates {
         let name = crat.name().to_string();
         let version = crat.version().to_string();
         handles.push(tokio::spawn(async move {
@@ -442,8 +442,9 @@ async fn download_crates(
     }
 
     let mut results = Vec::new();
-    for handle in handles {
+    for (i, handle) in handles.into_iter().enumerate() {
         results.push(handle.await);
+        println!("Downloaded {} version {}", crates[i].name(), crates[i].version());
     }
     results
 }

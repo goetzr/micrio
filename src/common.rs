@@ -12,10 +12,6 @@ pub enum Error {
     CrateNotFound {
         crate_name: String,
     },
-    CrateVersionNotFound {
-        crate_name: String,
-        crate_version: String,
-    },
     SerializeVersion(serde_json::Error),
 }
 
@@ -24,16 +20,6 @@ impl Display for Error {
         match self {
             Error::CrateNotFound { crate_name } => {
                 write!(f, "{} not found in the source registry", crate_name)
-            }
-            Error::CrateVersionNotFound {
-                crate_name,
-                crate_version,
-            } => {
-                write!(
-                    f,
-                    "{} version {} not found in the source registry",
-                    crate_name, crate_version
-                )
             }
             Error::SerializeVersion(e) => {
                 write!(f, "failed to serialize to JSON: {e}")
@@ -46,7 +32,6 @@ impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match &self {
             Error::CrateNotFound { .. } => None,
-            Error::CrateVersionNotFound { .. } => None,
             Error::SerializeVersion(e) => Some(e),
         }
     }
@@ -109,22 +94,4 @@ pub fn get_crate(index: &crates_index::Index, name: &str) -> Result<crates_index
     index.crate_(name).ok_or(Error::CrateNotFound {
         crate_name: name.to_string(),
     })
-}
-
-pub fn get_crate_version(
-    index: &crates_index::Index,
-    name: &str,
-    version: &str,
-) -> Result<Version> {
-    let crat = get_crate(index, name)?;
-    let crate_version = crat
-        .versions()
-        .iter()
-        .rev()
-        .find(|v| v.version() == version)
-        .ok_or(Error::CrateVersionNotFound {
-            crate_name: name.to_string(),
-            crate_version: version.to_string(),
-        })?;
-    Ok(Version::new(crate_version.clone()))
 }
