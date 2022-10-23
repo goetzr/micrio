@@ -1,2 +1,5 @@
+- Need to account for optional dependencies being implicit features
+  in both get_enabled_features_for_dependency and get_enabled_features_for_optional_dependency
+
 - Running tests:
       $env:RUST_LOG = "trace"; cargo test -- --nocapture

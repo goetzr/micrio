@@ -113,7 +113,7 @@ impl Display for Error {
                 write!(
                     f,
                     "feature {} not found in version {} of {}",
-                    feature_name, crate_name, crate_version
+                    feature_name, crate_version, crate_name
                 )
             }
         }
@@ -315,7 +315,19 @@ impl<'i> SrcRegistry<'i> {
             crate_version.version(),
             &enabled_crate_features.join(",")
         );
-        let features_table = parse_features_table(&crate_version)?;
+        let mut features_table = parse_features_table(&crate_version)?;
+        // Add any implicit features created by optional dependencies to the features table.
+        // TODO: Check this. Think about parse_features_table and optional dependencies.
+        for dep in crate_version.dependencies().iter().filter(|d| {
+            d.is_optional()
+                && (d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
+        }) {
+            if !features_table.contains_key(dep.name()) {
+                let feat_name = dep.name().to_string();
+                let entries = vec![FeatureTableEntry::Feature(format!("dep:{feat_name}"))];
+                features_table.insert(feat_name, entries);
+            }
+        }
         let mut enabled_dependencies = Vec::new();
         for dependency in crate_version
             .dependencies()
