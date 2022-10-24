@@ -315,7 +315,7 @@ impl<'i> SrcRegistry<'i> {
             crate_version.version(),
             &enabled_crate_features.join(",")
         );
-        let mut features_table = parse_features_table(&crate_version)?;
+        let mut features_table, disabled_implicit = parse_features_table(&crate_version)?;
         // Add any implicit features created by optional dependencies to the features table.
         // TODO: Check this. Think about parse_features_table and optional dependencies.
         for dep in crate_version.dependencies().iter().filter(|d| {
@@ -323,9 +323,9 @@ impl<'i> SrcRegistry<'i> {
                 && (d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
         }) {
             if !features_table.contains_key(dep.name()) {
-                let feat_name = dep.name().to_string();
-                let entries = vec![FeatureTableEntry::Feature(format!("dep:{feat_name}"))];
-                features_table.insert(feat_name, entries);
+                let dep_name = dep.name().to_string();
+                let entries = vec![FeatureTableEntry::Dependency(dep_name.clone())];
+                features_table.insert(dep_name, entries);
             }
         }
         let mut enabled_dependencies = Vec::new();
@@ -514,7 +514,7 @@ enum FeatureTableEntry {
 
 fn parse_features_table(
     crate_version: &Version,
-) -> Result<HashMap<String, Vec<FeatureTableEntry>>> {
+) -> Result<HashMap<String, Vec<FeatureTableEntry>, Vec<String>>> {
     let mut parsed_features_table = HashMap::new();
     for (feature, entries) in crate_version.features() {
         let mut parsed_entries = Vec::new();
