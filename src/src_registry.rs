@@ -179,7 +179,7 @@ impl<'i> SrcRegistry<'i> {
                 crate_version.name(),
                 crate_version.version()
             );
-            let features_table = parse_features_table(crate_version)?;
+            let features_table = parse_then_grow_features_table(crate_version)?;
             // Enable all features for each top-level crate to ensure all potential features
             // for each of its dependencies are enabled.
             let enabled_crate_features = features_table
@@ -315,19 +315,7 @@ impl<'i> SrcRegistry<'i> {
             crate_version.version(),
             &enabled_crate_features.join(",")
         );
-        let mut features_table, disabled_implicit = parse_features_table(&crate_version)?;
-        // Add any implicit features created by optional dependencies to the features table.
-        // TODO: Check this. Think about parse_features_table and optional dependencies.
-        for dep in crate_version.dependencies().iter().filter(|d| {
-            d.is_optional()
-                && (d.kind() == DependencyKind::Normal || d.kind() == DependencyKind::Build)
-        }) {
-            if !features_table.contains_key(dep.name()) {
-                let dep_name = dep.name().to_string();
-                let entries = vec![FeatureTableEntry::Dependency(dep_name.clone())];
-                features_table.insert(dep_name, entries);
-            }
-        }
+        let features_table = parse_then_grow_features_table(&crate_version)?;
         let mut enabled_dependencies = Vec::new();
         for dependency in crate_version
             .dependencies()
@@ -512,38 +500,65 @@ enum FeatureTableEntry {
     StrongDependencyFeature { dep_name: String, feature: String },
 }
 
-fn parse_features_table(
+fn parse_then_grow_features_table(
     crate_version: &Version,
-) -> Result<HashMap<String, Vec<FeatureTableEntry>, Vec<String>>> {
+) -> Result<HashMap<String, Vec<FeatureTableEntry>>> {
     let mut parsed_features_table = HashMap::new();
+    let mut implicit_features = HashSet::<&str>::from_iter(
+        crate_version
+            .dependencies()
+            .iter()
+            .filter(|e| {
+                e.is_optional()
+                    && (e.kind() == DependencyKind::Normal || e.kind() == DependencyKind::Build)
+            })
+            .map(|d| d.name()),
+    );
     for (feature, entries) in crate_version.features() {
         let mut parsed_entries = Vec::new();
         for entry in entries {
-            let parsed_entry = parse_feature_table_entry(crate_version, feature, entry)?;
+            let parsed_entry =
+                parse_feature_table_entry(crate_version, feature, entry, &mut implicit_features)?;
             parsed_entries.push(parsed_entry);
         }
         parsed_features_table.insert(feature.clone(), parsed_entries);
     }
-    Ok(parsed_features_table)
+    // Add any implicit features from optional dependencies to the features table.
+    let mut final_features_table = parsed_features_table;
+    for dep_name in implicit_features {
+        final_features_table.insert(
+            dep_name.to_string(),
+            vec![FeatureTableEntry::Dependency(dep_name.to_string())],
+        );
+    }
+    Ok(final_features_table)
 }
 
 fn parse_feature_table_entry(
     crate_version: &Version,
     feature: &String,
     entry: &String,
+    implicit_features: &mut HashSet<&str>,
 ) -> Result<FeatureTableEntry> {
     // Possibilities:
     //   feat_name
     //   dep_name (optional dependency)
     //   dep_name/feat_name (optional or required dependency)
     //   dep_name?/feat_name (optional dependency)
-    //   dep:dep_name (optional dependency)
-    //   dep:dep_name/feat_name (optional dependency)
-    //   dep:dep_name?/feat_name (optional dependency)
+    //   dep:dep_name (optional dependency, implicit feature disabled)
+    //   dep:dep_name/feat_name (optional dependency, implicit feature disabled)
+    //   dep:dep_name?/feat_name (optional dependency, implicit feature disabled)
     let parts = entry.split("/").collect::<Vec<_>>();
     match parts.len() {
-        1 => parse_feature_or_dependency_entry(crate_version, feature, entry),
-        2 => parse_dependency_feature_entry(crate_version, feature, entry, parts[0], parts[1]),
+        1 => parse_feature_or_dependency_entry(crate_version, feature, entry, implicit_features),
+        2 => parse_dependency_feature_entry(
+            crate_version,
+            feature,
+            entry,
+            parts[0],
+            parts[1],
+            implicit_features,
+        ),
         _ => Err(Error::FeatureTable {
             crate_name: crate_version.name().to_string(),
             crate_version: crate_version.version().to_string(),
@@ -556,13 +571,17 @@ fn parse_feature_or_dependency_entry(
     crate_version: &Version,
     feature: &String,
     entry: &String,
+    implicit_features: &mut HashSet<&str>,
 ) -> Result<FeatureTableEntry> {
     // Possibilities:
     //   feat_name
     //   dep_name (optional dependency)
-    //   dep:dep_name (optional dependency)
+    //   dep:dep_name (optional dependency, implicit feature disabled)
     if let Some(dep_name) = entry.strip_prefix("dep:") {
+        // This must be an optional dependency. It's implicit feature is disabled here.
         if is_optional_dependency_of(dep_name, crate_version) {
+            // It's implicit feature is disabled here, so remove it from the set of implicit features to add.
+            implicit_features.remove(dep_name);
             Ok(FeatureTableEntry::Dependency(dep_name.to_string()))
         } else {
             Err(Error::FeatureTable {
@@ -572,9 +591,11 @@ fn parse_feature_or_dependency_entry(
             })
         }
     } else {
+        // Feature or optional dependency.
         if is_feature_of(entry, crate_version) {
             Ok(FeatureTableEntry::Feature(entry.to_string()))
         } else if is_optional_dependency_of(entry, crate_version) {
+            // Implicit feature is NOT disabled here.
             Ok(FeatureTableEntry::Dependency(entry.to_string()))
         } else {
             Err(Error::FeatureTable {
@@ -592,46 +613,75 @@ fn parse_dependency_feature_entry(
     entry: &String,
     dep_name: &str,
     dep_feat_name: &str,
+    implicit_features: &mut HashSet<&str>,
 ) -> Result<FeatureTableEntry> {
     // Possibilities:
     //   dep_name/feat_name (optional or required dependency)
     //   dep_name?/feat_name (optional dependency)
-    //   dep:dep_name/feat_name (optional dependency)
+    //   dep:dep_name/feat_name (optional dependency, implicit feature disabled)
     //       NOTE: The code below allows a required dependency with this form, even though it shouldn't.
     //             This is b/c it blindly strips off the "dep:" prefix at the beginning.
-    //   dep:dep_name?/feat_name (optional dependency)
-    let mut dep_name = dep_name;
-    if let Some(stripped) = dep_name.strip_prefix("dep:") {
-        dep_name = stripped;
-    }
-
-    if let Some(dep_name) = dep_name.strip_suffix("?") {
+    //   dep:dep_name?/feat_name (optional dependency, implicit feature disabled)
+    if let Some(mut dep_name) = dep_name.strip_prefix("dep:") {
+        // This must be an optional dependency. It's implicit feature is disabled here.
+        let mut is_weak_dep = false;
+        if let Some(stripped) = dep_name.strip_suffix("?") {
+            dep_name = stripped;
+            is_weak_dep = true;
+        }
         if is_optional_dependency_of(dep_name, crate_version) {
-            Ok(FeatureTableEntry::WeakDependencyFeature {
-                dep_name: dep_name.to_string(),
-                feature: dep_feat_name.to_string(),
-            })
+            // It's implicit feature is disabled here, so remove it from the set of implicit features to add.
+            implicit_features.remove(dep_name);
+            if is_weak_dep {
+                Ok(FeatureTableEntry::WeakDependencyFeature {
+                    dep_name: dep_name.to_string(),
+                    feature: dep_feat_name.to_string(),
+                })
+            } else {
+                Ok(FeatureTableEntry::StrongDependencyFeature {
+                    dep_name: dep_name.to_string(),
+                    feature: dep_feat_name.to_string(),
+                })
+            }
         } else {
             Err(Error::FeatureTable {
                 crate_name: crate_version.name().to_string(),
                 crate_version: crate_version.version().to_string(),
-                error_msg: format!("entry '{entry}' in feature '{feature}': name before '/' not an optional dependency")
+                error_msg: format!("entry '{entry}' in feature '{feature}': name after 'dep:' not an optional dependency")
             })
         }
     } else {
-        if is_dependency_of(dep_name, crate_version) {
-            Ok(FeatureTableEntry::StrongDependencyFeature {
-                dep_name: dep_name.to_string(),
-                feature: dep_feat_name.to_string(),
-            })
+        // Required or optional dependency.
+        // If optional, its implicit feature is NOT disabled here.
+        if let Some(dep_name) = dep_name.strip_suffix("?") {
+            // This must be an optional dependency.
+            if is_optional_dependency_of(dep_name, crate_version) {
+                Ok(FeatureTableEntry::WeakDependencyFeature {
+                    dep_name: dep_name.to_string(),
+                    feature: dep_feat_name.to_string(),
+                })
+            } else {
+                Err(Error::FeatureTable {
+                    crate_name: crate_version.name().to_string(),
+                    crate_version: crate_version.version().to_string(),
+                    error_msg: format!("entry '{entry}' in feature '{feature}': name before '?' not an optional dependency")
+                })
+            }
         } else {
-            Err(Error::FeatureTable {
-                crate_name: crate_version.name().to_string(),
-                crate_version: crate_version.version().to_string(),
-                error_msg: format!(
-                    "entry '{entry}' in feature '{feature}': name before '/' not a dependency"
-                ),
-            })
+            if is_dependency_of(dep_name, crate_version) {
+                Ok(FeatureTableEntry::StrongDependencyFeature {
+                    dep_name: dep_name.to_string(),
+                    feature: dep_feat_name.to_string(),
+                })
+            } else {
+                Err(Error::FeatureTable {
+                    crate_name: crate_version.name().to_string(),
+                    crate_version: crate_version.version().to_string(),
+                    error_msg: format!(
+                        "entry '{entry}' in feature '{feature}': name before '/' not a dependency"
+                    ),
+                })
+            }
         }
     }
 }
