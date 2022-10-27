@@ -1,5 +1,4 @@
-- Need to account for optional dependencies being implicit features
-  in both get_enabled_features_for_dependency and get_enabled_features_for_optional_dependency
+- aes version 0.6.0: target expression cfg(all(target_feature = "aes", target_feature = "sse2", any(target_arch = "x86_64", target_arch = "x86"))) does not contain a target predicate
 
 - Running tests:
       $env:RUST_LOG = "trace"; cargo test -- --nocapture

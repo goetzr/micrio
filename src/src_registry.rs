@@ -36,11 +36,6 @@ pub enum Error {
         crate_version: String,
         error_msg: String,
     },
-    FeatureNotFound {
-        crate_name: String,
-        crate_version: String,
-        feature_name: String,
-    },
 }
 
 impl Display for Error {
@@ -105,17 +100,6 @@ impl Display for Error {
                     crate_name, crate_version, error_msg
                 )
             }
-            Error::FeatureNotFound {
-                crate_name,
-                crate_version,
-                feature_name,
-            } => {
-                write!(
-                    f,
-                    "feature {} not found in version {} of {}",
-                    feature_name, crate_version, crate_name
-                )
-            }
         }
     }
 }
@@ -130,7 +114,6 @@ impl std::error::Error for Error {
             Error::SemVerVersion { error, .. } => Some(error),
             Error::CompatibleCrateNotFound { .. } => None,
             Error::FeatureTable { .. } => None,
-            Error::FeatureNotFound { .. } => None,
         }
     }
 }
@@ -267,6 +250,9 @@ impl<'i> SrcRegistry<'i> {
             }
 
             for enabled_dependency in enabled_dependencies {
+                // NOTE: Can't skip processing a dependency if it's already in the set of required dependencies.
+                //       It could have more features enabled from the parent crate this time,
+                //       requiring additional dependencies to be downloaded.
                 self.process_enabled_dependency(enabled_dependency, &mut required_dependencies)?;
             }
 
@@ -384,6 +370,9 @@ impl<'i> SrcRegistry<'i> {
         }
 
         for enabled_dependency in enabled_dependencies {
+            // NOTE: Can't skip processing a dependency if it's already in the set of required dependencies.
+            //       It could have more features enabled from the parent crate this time,
+            //       requiring additional dependencies to be downloaded.
             self.process_enabled_dependency(enabled_dependency, required_dependencies)?;
         }
 
@@ -718,13 +707,13 @@ fn get_enabled_features_for_optional_dependency(
     let mut dependency_enabled = force_enable;
 
     while let Some(feature_under_exam) = features_to_examine.pop_front() {
-        let entries = features_table
-            .get(&feature_under_exam)
-            .ok_or(Error::FeatureNotFound {
-                crate_name: crate_version.name().to_string(),
-                crate_version: crate_version.version().to_string(),
-                feature_name: feature_under_exam,
-            })?;
+        let entries = match features_table.get(&feature_under_exam) {
+            Some(entries) => entries,
+            None => {
+                warn!("Feature {feature_under_exam} was not found in {} version {}", crate_version.name(), crate_version.version());
+                continue;
+            }
+        };
         for entry in entries {
             match entry {
                 FeatureTableEntry::Feature(feature) => {
@@ -777,13 +766,13 @@ fn get_enabled_features_for_dependency(
     let mut features_to_examine = VecDeque::from_iter(enabled_crate_features.iter().cloned());
 
     while let Some(feature_under_exam) = features_to_examine.pop_front() {
-        let entries = features_table
-            .get(&feature_under_exam)
-            .ok_or(Error::FeatureNotFound {
-                crate_name: crate_version.name().to_string(),
-                crate_version: crate_version.version().to_string(),
-                feature_name: feature_under_exam,
-            })?;
+        let entries = match features_table.get(&feature_under_exam) {
+            Some(entries) => entries,
+            None => {
+                warn!("Feature {feature_under_exam} was not found in {} version {}", crate_version.name(), crate_version.version());
+                continue;
+            }
+        };
         for entry in entries {
             match entry {
                 FeatureTableEntry::Feature(feature) => {
