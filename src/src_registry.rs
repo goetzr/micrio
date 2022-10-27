@@ -407,15 +407,12 @@ impl<'i> SrcRegistry<'i> {
     ) -> Result<bool> {
         match dependency.target() {
             Some(expr_str) => {
-                trace!(
-                    "{} version {} dependency {} target expression = {}",
+                trace!("{} version {} dependency {}: target expression = {expr_str}",
                     crate_version.name(),
                     crate_version.version(),
-                    dependency.name(),
-                    expr_str
+                    dependency.name()
                 );
                 if expr_str.starts_with("cfg") {
-                    trace!("config expression");
                     let expr =
                         Expression::parse(&expr_str).map_err(|e| Error::ConfigExpression {
                             crate_name: crate_version.name().to_string(),
@@ -424,13 +421,21 @@ impl<'i> SrcRegistry<'i> {
                             error: e,
                         })?;
                     let result = expr.eval(|pred| match pred {
-                        Predicate::Target(tp) => Some(tp.matches(self.target)),
+                        Predicate::Target(tp) => {
+                            let passed = tp.matches(self.target);
+                            trace!("{} version {} dependency {}: target predicate specified, passed = {passed}",
+                                crate_version.name(),
+                                crate_version.version(),
+                                dependency.name()
+                            );
+                            Some(passed)
+                        }
                         Predicate::TargetFeature(tf) => {
                             // https://doc.rust-lang.org/reference/conditional-compilation.html#target_feature
                             // https://doc.rust-lang.org/reference/attributes/codegen.html#the-target_feature-attribute
                             
                             // Assume our target system has the specified platform architecture feature available.
-                            trace!("{} version {} dependency {} target expression: assuming that the target system has the '{tf}' platform architecture feature available",
+                            trace!("{} version {} dependency {}: target feature '{tf}' specified, assuming that the target system has this platform architecture feature available",
                                 crate_version.name(),
                                 crate_version.version(),
                                 dependency.name()
@@ -440,7 +445,7 @@ impl<'i> SrcRegistry<'i> {
                         Predicate::Flag(flag) => {
                             // A custom flag must be passed to rustc with "--cfg".
                             // Assume we're not doing this.
-                            trace!("{} version {} dependency {} target expression: assuming that the custom flag '{flag}' is not enabled via rustc --cfg",
+                            trace!("{} version {} dependency {}: custom flag '{flag}' specified, assuming that this flag is NOT enabled via rustc --cfg",
                                 crate_version.name(),
                                 crate_version.version(),
                                 dependency.name()
@@ -450,36 +455,41 @@ impl<'i> SrcRegistry<'i> {
                         Predicate::KeyValue { key, val } => {
                             // A generic key = value predicate that doesn’t match one of the known options.
                             // I've seen crates use "target = <target-triple>", so check for that explicity.
-                            // Otherwise, ignore the key-value pair.
+                            // Otherwise, assume the key-value pair is not satisfied.
                             if *key == "target" {
                                 Some(*val == self.target.triple.as_str())
                             } else {
-                                trace!("{} version {} dependency {} target expression: ignoring the custom key-value pair '{key} = {val}'",
+                                warn!("{} version {} dependency {}: custom key-value pair '{key} = {val}' specified, assuming this condition is NOT satisfied",
                                     crate_version.name(),
                                     crate_version.version(),
                                     dependency.name()
                                 );
-                                None
+                                Some(false)
                             }
                         }
                         _ => {
                             warn!(
-                                "{} version {} dependency {}: ignoring unsupported target expression {expr_str}",
-                                crate_version.name(),
-                                crate_version.version(),
-                                dependency.name()
+                                "{} version {} dependency {}: ignoring unsupported target expression",
+                                    crate_version.name(),
+                                    crate_version.version(),
+                                    dependency.name()
                             );
                             None
                         }
                     });
                     match result {
                         Some(result) => Ok(result),
-                        None => Ok(false),
+                        None => Ok(true),
                     }
                 } else {
                     // Full target triple specified.
-                    trace!("full target triple specified: {expr_str}");
-                    Ok(expr_str == self.target.triple.as_str())
+                    let enabled = expr_str == self.target.triple.as_str();
+                    trace!("{} version {} dependency {}: full target triple specified, enabled = {enabled}",
+                        crate_version.name(),
+                        crate_version.version(),
+                        dependency.name()
+                    );
+                    Ok(enabled)
                 }
             }
             None => Ok(true),
@@ -817,7 +827,8 @@ fn get_enabled_features_for_dependency(
                     }
                 }
                 FeatureTableEntry::Dependency(dep_name) if dep_name == dependency.name() => {
-                    warn!(
+                    // This happens enough to warrant changing this from a warning to a trace.
+                    trace!(
                         "{} version {}: required dependency {dep_name} found in feature table",
                         crate_version.name(),
                         crate_version.version()
