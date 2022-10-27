@@ -1,5 +1,5 @@
-use std::io::{self, BufReader, BufRead, LineWriter, Write};
-use std::fs::{File, OpenOptions};
+use std::io::{BufReader, BufRead, LineWriter, Write};
+use std::fs::File;
 
 pub fn main() {
     let reader = BufReader::new(File::open("output.txt").expect("input file open"));
