@@ -425,13 +425,49 @@ impl<'i> SrcRegistry<'i> {
                         })?;
                     let result = expr.eval(|pred| match pred {
                         Predicate::Target(tp) => Some(tp.matches(self.target)),
-                        _ => {
-                            warn!(
-                                "{} version {}: target expression {} does not contain \
-                                a target predicate",
+                        Predicate::TargetFeature(tf) => {
+                            // https://doc.rust-lang.org/reference/conditional-compilation.html#target_feature
+                            // https://doc.rust-lang.org/reference/attributes/codegen.html#the-target_feature-attribute
+                            
+                            // Assume our target system has the specified platform architecture feature available.
+                            trace!("{} version {} dependency {} target expression: assuming that the target system has the '{tf}' platform architecture feature available",
                                 crate_version.name(),
                                 crate_version.version(),
-                                expr_str
+                                dependency.name()
+                            );
+                            Some(true)
+                        }
+                        Predicate::Flag(flag) => {
+                            // A custom flag must be passed to rustc with "--cfg".
+                            // Assume we're not doing this.
+                            trace!("{} version {} dependency {} target expression: assuming that the custom flag '{flag}' is not enabled via rustc --cfg",
+                                crate_version.name(),
+                                crate_version.version(),
+                                dependency.name()
+                            );
+                            Some(false)
+                        }
+                        Predicate::KeyValue { key, val } => {
+                            // A generic key = value predicate that doesn’t match one of the known options.
+                            // I've seen crates use "target = <target-triple>", so check for that explicity.
+                            // Otherwise, ignore the key-value pair.
+                            if *key == "target" {
+                                Some(*val == self.target.triple.as_str())
+                            } else {
+                                trace!("{} version {} dependency {} target expression: ignoring the custom key-value pair '{key} = {val}'",
+                                    crate_version.name(),
+                                    crate_version.version(),
+                                    dependency.name()
+                                );
+                                None
+                            }
+                        }
+                        _ => {
+                            warn!(
+                                "{} version {} dependency {}: ignoring unsupported target expression {expr_str}",
+                                crate_version.name(),
+                                crate_version.version(),
+                                dependency.name()
                             );
                             None
                         }
@@ -442,7 +478,7 @@ impl<'i> SrcRegistry<'i> {
                     }
                 } else {
                     // Full target triple specified.
-                    trace!("full target triple");
+                    trace!("full target triple specified: {expr_str}");
                     Ok(expr_str == self.target.triple.as_str())
                 }
             }
