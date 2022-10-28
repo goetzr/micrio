@@ -1,6 +1,6 @@
 use crate::common::{self, Version};
 use crates_io_api::{CratesQuery, Sort, SyncClient};
-use log::warn;
+use log::{warn, trace};
 use std::fmt::{self, Display};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -97,7 +97,8 @@ impl<'i> TopLevelBuilder<'i> {
                 let version = crat.highest_normal_version();
                 if version.is_none() {
                     // No versions available for this crate. Skip over it.
-                    warn!(
+                    // This happens enough to warrant changing this from a warning to a trace.
+                    trace!(
                         "no versions available for the most downloaded crate {}",
                         crat.name()
                     );
