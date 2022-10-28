@@ -747,7 +747,7 @@ fn get_enabled_features_for_optional_dependency(
         let entries = match features_table.get(&feature_under_exam) {
             Some(entries) => entries,
             None => {
-                if !feature_under_exam.is_empty() {
+                if !feature_under_exam.trim().is_empty() {
                     warn!("Feature {feature_under_exam} was not found in {} version {}", crate_version.name(), crate_version.version());
                 }
                 continue;
