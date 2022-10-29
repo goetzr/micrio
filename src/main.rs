@@ -39,12 +39,12 @@ fn try_main() -> anyhow::Result<()> {
     }
 
     println!("{} top level crates selected.", crates.len());
-    print!("Getting required dependencies...");
+    println!("Getting required dependencies...");
     let dependencies = src_registry.get_required_dependencies(&crates)?;
     let tot_num_deps = dependencies.len();
     let num_deps_dl = dependencies.iter().filter(|d| d.download).count();
     crates.extend(dependencies);
-    println!("done");
+    println!("Done getting required dependencies.");
     println!(
         "{} total dependencies identified, {} of these must be downloaded.",
         tot_num_deps, num_deps_dl

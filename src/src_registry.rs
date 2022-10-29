@@ -143,7 +143,8 @@ impl<'i> SrcRegistry<'i> {
         crate_versions: &HashSet<Version>,
     ) -> Result<HashSet<Version>> {
         let mut required_dependencies = HashSet::new();
-        for crate_version in crate_versions {
+        for (i, crate_version) in crate_versions.iter().enumerate() {
+            println!("Analyzing {:>4} of {:>4}: {} version {}", i+1, crate_versions.len(), crate_version.name(), crate_version.version());
             trace!(
                 "{} version {}: (START) getting required dependencies",
                 crate_version.name(),
@@ -808,7 +809,9 @@ fn get_enabled_features_for_dependency(
         let entries = match features_table.get(&feature_under_exam) {
             Some(entries) => entries,
             None => {
-                warn!("Feature {feature_under_exam} was not found in {} version {}", crate_version.name(), crate_version.version());
+                if !feature_under_exam.trim().is_empty() {
+                    warn!("Feature {feature_under_exam} was not found in {} version {}", crate_version.name(), crate_version.version());
+                }
                 continue;
             }
         };

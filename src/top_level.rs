@@ -89,6 +89,7 @@ impl<'i> TopLevelBuilder<'i> {
             .page_size(PAGE_SIZE)
             .build();
         for page_index in 0..num_pages {
+            println!("Most downloaded crates - retrieving page {:>3} of {:>3}...", page_index+1 , num_pages);
             query.set_page(page_index + 1);
             let page = self.client.crates(query.clone())?;
             for crat in page.crates {

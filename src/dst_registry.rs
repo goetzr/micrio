@@ -442,9 +442,10 @@ async fn download_crates(
     }
 
     let mut results = Vec::new();
+    let num_handles = handles.len();
     for (i, handle) in handles.into_iter().enumerate() {
         results.push(handle.await);
-        println!("Downloaded {} version {}", crates[i].name(), crates[i].version());
+        println!("Downloaded {:>4} of {:>4}: {} version {}", i+1, num_handles, crates[i].name(), crates[i].version());
     }
     results
 }
