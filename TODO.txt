@@ -1,2 +1,12 @@
+- Analyzing   15 of 4983: evcxr_repl version 0.14.0
+- Analyzing   25 of 4983: sc-service version 0.9.0
+- sc-block-builder
+- sc-client-api
+
+- Make blacklist:
+  - crate.repository == https://github.com/paritytech/substrate/
+
+- Store names in index in *lowercase*.
+
 - Running tests:
       $env:RUST_LOG = "trace"; cargo test -- --nocapture

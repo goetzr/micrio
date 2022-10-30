@@ -239,11 +239,15 @@ impl<'i> SrcRegistry<'i> {
                 }
             }
 
-            for enabled_dependency in enabled_dependencies {
+            let mut depth: u32 = 1;
+            let num_deps = enabled_dependencies.len();
+            for (i, enabled_dependency) in enabled_dependencies.into_iter().enumerate() {
+                println!("\t--> {} of {}: {} dependency", i+1, num_deps, enabled_dependency.crate_version.name());
                 // NOTE: Can't skip processing a dependency if it's already in the set of required dependencies.
                 //       It could have more features enabled from the parent crate this time,
                 //       requiring additional dependencies to be downloaded.
-                self.process_enabled_dependency(enabled_dependency, &mut required_dependencies)?;
+                let mut dep_chain = vec![enabled_dependency.crate_version.name().to_string()];
+                self.process_enabled_dependency(enabled_dependency, &mut required_dependencies, &mut depth, &mut dep_chain)?;
             }
 
             trace!(
@@ -259,8 +263,11 @@ impl<'i> SrcRegistry<'i> {
         &self,
         enabled_dependency: EnabledDependency,
         required_dependencies: &mut HashSet<Version>,
+        depth: &mut u32,
+        dep_chain: &mut Vec<String>,
     ) -> Result<()> {
         let crate_version = enabled_dependency.crate_version;
+        println!("\t\t({depth}) {} version {}", crate_version.name(), crate_version.version());
         trace!(
             "{} version {}: (START) getting required dependencies",
             crate_version.name(),
@@ -361,12 +368,20 @@ impl<'i> SrcRegistry<'i> {
             }
         }
 
+        *depth += 1;
         for enabled_dependency in enabled_dependencies {
             // NOTE: Can't skip processing a dependency if it's already in the set of required dependencies.
             //       It could have more features enabled from the parent crate this time,
             //       requiring additional dependencies to be downloaded.
-            self.process_enabled_dependency(enabled_dependency, required_dependencies)?;
+            if dep_chain.iter().any(|n| n == enabled_dependency.crate_version.name()) {
+                println!("{} version {}: cycle detected with dependency {}", crate_version.name(), crate_version.version(), enabled_dependency.crate_version.name());
+                continue;
+            }
+            dep_chain.push(enabled_dependency.crate_version.name().to_string());
+            self.process_enabled_dependency(enabled_dependency, required_dependencies, depth, dep_chain)?;
+            dep_chain.pop();
         }
+        *depth -= 1;
 
         trace!(
             "{} version {}: (END) getting required dependencies",
@@ -403,6 +418,13 @@ impl<'i> SrcRegistry<'i> {
     ) -> Result<bool> {
         match dependency.target() {
             Some(expr_str) => {
+                // TODO: Remove me!
+                if dependency.name() == "libc" {
+                    println!("{} version {} dependency libc: target expression = {expr_str}",
+                        crate_version.name(),
+                        crate_version.version(),
+                    )
+                }
                 trace!("{} version {} dependency {}: target expression = {expr_str}",
                     crate_version.name(),
                     crate_version.version(),
