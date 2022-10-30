@@ -19,7 +19,7 @@ fn try_main() -> anyhow::Result<()> {
 
     let index = crates_index::Index::new_cargo_default()?;
     let top_level_builder = TopLevelBuilder::new(&index)?;
-    let src_registry = SrcRegistry::new(&index)?;
+    let mut src_registry = SrcRegistry::new(&index);
     let dst_registry = DstRegistry::new(&cli.mirror_dir_path)?;
 
     let mut crates = HashSet::new();
@@ -40,15 +40,11 @@ fn try_main() -> anyhow::Result<()> {
 
     println!("{} top level crates selected.", crates.len());
     println!("Getting required dependencies...");
-    let dependencies = src_registry.get_required_dependencies(&crates)?;
-    let tot_num_deps = dependencies.len();
-    let num_deps_dl = dependencies.iter().filter(|d| d.download).count();
+    let dependencies = src_registry.get_dependencies(&crates)?;
+    let num_deps = dependencies.len();
     crates.extend(dependencies);
     println!("Done getting required dependencies.");
-    println!(
-        "{} total dependencies identified, {} of these must be downloaded.",
-        tot_num_deps, num_deps_dl
-    );
+    println!("{num_deps} total dependencies identified.");
 
     println!("Populating local registry...");
     dst_registry.populate(&crates)?;

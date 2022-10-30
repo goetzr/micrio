@@ -105,7 +105,7 @@ impl<'i> TopLevelBuilder<'i> {
                     );
                     continue;
                 }
-                let version = common::Version::new(version.unwrap().clone()).download(true);
+                let version = common::Version(version.unwrap().clone());
                 most_downloaded.push(version);
             }
         }
@@ -134,7 +134,7 @@ impl<'i> TopLevelBuilder<'i> {
                 );
                 continue;
             }
-            let version = common::Version::new(version.unwrap().clone()).download(true);
+            let version = common::Version(version.unwrap().clone());
             crates.push(version);
         }
         Ok(crates)

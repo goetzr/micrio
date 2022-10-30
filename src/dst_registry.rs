@@ -203,7 +203,7 @@ fn populate_registry(top_dir_path: &str, crates: &HashSet<Version>) -> Result<()
     let registry_dir_path = format!("{top_dir_path}/{REGISTRY_DIR}");
     fs::create_dir(&registry_dir_path).map_err(|e| Error::CreateRegistryDir(e))?;
 
-    let crates = crates.iter().filter(|c| c.download).cloned().collect::<Vec<_>>();
+    let crates = Vec::from_iter(crates.iter().cloned());
     let rt = tokio::runtime::Runtime::new().map_err(|e| Error::CreateRuntime(e))?;
     let results = rt.block_on(download_crates(crates.clone()));
 

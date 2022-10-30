@@ -1,11 +1,7 @@
 use crates_index;
-use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
 use std::hash::{Hash, Hasher};
-
-pub const TARGET_TRIPLE: &'static str = "x86_64-pc-windows-msvc";
-pub const DEFAULT_FEATURE: &'static str = "default";
 
 #[derive(Debug)]
 pub enum Error {
@@ -40,39 +36,23 @@ impl std::error::Error for Error {
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Clone)]
-pub struct Version {
-    pub version: crates_index::Version,
-    pub download: bool,
-}
+pub struct Version(pub crates_index::Version);
 
 impl Version {
-    pub fn new(version: crates_index::Version) -> Self {
-        Version { version, download: false }
-    }
-
-    pub fn download(mut self, flag: bool) -> Self {
-        self.download = flag;
-        self
-    }
-
     pub fn to_json(&self) -> Result<String> {
-        serde_json::to_string(&self.version).map_err(|e| Error::SerializeVersion(e))
+        serde_json::to_string(&self.0).map_err(|e| Error::SerializeVersion(e))
     }
 
     pub fn name(&self) -> &str {
-        self.version.name()
+        self.0.name()
     }
 
     pub fn version(&self) -> &str {
-        self.version.version()
+        self.0.version()
     }
 
     pub fn dependencies(&self) -> &[crates_index::Dependency] {
-        self.version.dependencies()
-    }
-
-    pub fn features(&self) -> &HashMap<String, Vec<String>> {
-        self.version.features()
+        self.0.dependencies()
     }
 }
 
@@ -85,8 +65,8 @@ impl Eq for Version {}
 
 impl Hash for Version {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.version.name().hash(state);
-        self.version.version().hash(state);
+        self.0.name().hash(state);
+        self.0.version().hash(state);
     }
 }
 
