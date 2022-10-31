@@ -7,7 +7,7 @@ use std::fs::{self, DirEntry, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use tokio::task;
+use tokio::{task, sync};
 
 #[derive(Debug)]
 pub enum Error {
@@ -205,7 +205,9 @@ fn populate_registry(top_dir_path: &str, crates: &HashSet<Version>) -> Result<()
 
     let crates = Vec::from_iter(crates.iter().cloned());
     let rt = tokio::runtime::Runtime::new().map_err(|e| Error::CreateRuntime(e))?;
-    let results = rt.block_on(download_crates(crates.clone()));
+
+    let sem = sync::Semaphore::new(100);
+    let results = rt.block_on(download_crates(crates.clone(), &sem));
 
     for (i, result) in results.into_iter().enumerate() {
         let name = crates[i].name();
@@ -255,7 +257,7 @@ fn add_crates_to_index(top_dir_path: &str, crates: &HashSet<Version>) -> Result<
 fn add_crate_to_index(top_dir_path: &str, crat: &Version) -> Result<()> {
     let crate_path = get_crate_index_path(top_dir_path, crat)?;
 
-    let crate_path = format!("{crate_path}/{}", crat.name());
+    let crate_path = format!("{crate_path}/{}", crat.name().to_lowercase());
     let mut crate_file = OpenOptions::new()
         .create(true)
         .append(true)
@@ -289,7 +291,8 @@ fn add_crate_to_index(top_dir_path: &str, crat: &Version) -> Result<()> {
 }
 
 fn get_crate_index_path(top_dir_path: &str, crat: &Version) -> Result<String> {
-    match crat.name().len() {
+    let crate_name = crat.name().to_lowercase();
+    match crate_name.len() {
         1 => {
             let crate_path = format!("{top_dir_path}/{INDEX_DIR}/1");
             if !Path::new(&crate_path).exists() {
@@ -327,7 +330,7 @@ fn get_crate_index_path(top_dir_path: &str, crat: &Version) -> Result<String> {
 
             let crate_path = format!(
                 "{crate_path}/{}",
-                crat.name().chars().take(1).collect::<String>()
+                crate_name.chars().take(1).collect::<String>()
             );
             if !Path::new(&crate_path).exists() {
                 fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
@@ -340,7 +343,7 @@ fn get_crate_index_path(top_dir_path: &str, crat: &Version) -> Result<String> {
             Ok(crate_path)
         }
         _ => {
-            let dir1_name = crat.name().chars().take(2).collect::<String>();
+            let dir1_name = crate_name.chars().take(2).collect::<String>();
             let crate_path = format!("{top_dir_path}/{INDEX_DIR}/{dir1_name}");
             if !Path::new(&crate_path).exists() {
                 fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
@@ -351,7 +354,7 @@ fn get_crate_index_path(top_dir_path: &str, crat: &Version) -> Result<String> {
                 })?;
             }
 
-            let dir2_name = crat.name().chars().skip(2).take(2).collect::<String>();
+            let dir2_name = crate_name.chars().skip(2).take(2).collect::<String>();
             let crate_path = format!("{crate_path}/{dir2_name}");
             if !Path::new(&crate_path).exists() {
                 fs::create_dir(&crate_path).map_err(|e| Error::AddCrateToIndex {
@@ -431,9 +434,11 @@ fn commit_git_repo(repo: &Repository, index: &mut git2::Index) -> Result<()> {
 
 async fn download_crates(
     crates: Vec<Version>,
+    sem: &sync::Semaphore,
 ) -> Vec<std::result::Result<Result<bytes::Bytes>, task::JoinError>> {
     let mut handles = Vec::new();
     for crat in &crates {
+        let _permit = sem.acquire().await.expect("acquire semaphore");
         let name = crat.name().to_string();
         let version = crat.version().to_string();
         handles.push(tokio::spawn(async move {
