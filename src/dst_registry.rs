@@ -207,15 +207,16 @@ fn populate_registry(top_dir_path: &str, crates: &HashSet<Version>) -> Result<()
     let rt = tokio::runtime::Runtime::new().map_err(|e| Error::CreateRuntime(e))?;
 
     let sem = sync::Semaphore::new(100);
-    let results = rt.block_on(download_crates(crates.clone(), &sem));
+    let results = rt.block_on(download_crates(crates.clone(), &registry_dir_path, &sem));
 
     for (i, result) in results.into_iter().enumerate() {
         let name = crates[i].name();
         let version = crates[i].version();
         match result {
-            Ok(fut_res) => {
-                let crate_file_contents = fut_res?;
-                add_crate_to_registry(&registry_dir_path, name, version, crate_file_contents)?;
+            Ok(_) => {
+                //let crate_file_contents = fut_res?;
+                //add_crate_to_registry(&registry_dir_path, name, version, crate_file_contents)?;
+                ()
             }
             Err(e) => {
                 // Task panicked.
@@ -434,28 +435,25 @@ fn commit_git_repo(repo: &Repository, index: &mut git2::Index) -> Result<()> {
 
 async fn download_crates(
     crates: Vec<Version>,
+    registry_dir_path: &str,
     sem: &sync::Semaphore,
-) -> Vec<std::result::Result<Result<bytes::Bytes>, task::JoinError>> {
-    let mut handles = Vec::new();
-    for crat in &crates {
+) -> Vec<std::result::Result<Result<()>, task::JoinError>> {
+    let mut results = Vec::new();
+    for (i, crat) in crates.iter().enumerate() {
         let _permit = sem.acquire().await.expect("acquire semaphore");
         let name = crat.name().to_string();
         let version = crat.version().to_string();
-        handles.push(tokio::spawn(async move {
-            download_crate(&name, &version).await
-        }));
-    }
-
-    let mut results = Vec::new();
-    let num_handles = handles.len();
-    for (i, handle) in handles.into_iter().enumerate() {
-        results.push(handle.await);
-        println!("Downloaded {:>4} of {:>4}: {} version {}", i+1, num_handles, crates[i].name(), crates[i].version());
+        let path = registry_dir_path.to_string();
+        let result = tokio::spawn(async move {
+            download_crate(&name, &version, &path).await
+        }).await;
+        results.push(result);
+        println!("Downloaded {:>4} of {:>4}: {} version {}", i+1, crates.len(), crates[i].name(), crates[i].version());
     }
     results
 }
 
-async fn download_crate(name: &str, version: &str) -> Result<bytes::Bytes> {
+async fn download_crate(name: &str, version: &str, registry_dir_path: &str) -> Result<()> {
     const DL_URL: &'static str = "https://static.crates.io/crates";
     let crate_url = format!("{DL_URL}/{name}/{name}-{version}.crate");
 
@@ -471,8 +469,9 @@ async fn download_crate(name: &str, version: &str) -> Result<bytes::Bytes> {
         crate_name: name.to_string(),
         crate_version: version.to_string(),
         error: Box::new(e),
-    });
-    bytes
+    })?;
+
+    add_crate_to_registry(registry_dir_path, name, version, bytes)
 }
 
 fn add_crate_to_registry(
