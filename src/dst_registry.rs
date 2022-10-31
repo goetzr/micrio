@@ -210,19 +210,13 @@ fn populate_registry(top_dir_path: &str, crates: &HashSet<Version>) -> Result<()
     let results = rt.block_on(download_crates(crates.clone(), &registry_dir_path, &sem));
 
     for (i, result) in results.into_iter().enumerate() {
-        let name = crates[i].name();
-        let version = crates[i].version();
         match result {
-            Ok(_) => {
-                //let crate_file_contents = fut_res?;
-                //add_crate_to_registry(&registry_dir_path, name, version, crate_file_contents)?;
-                ()
-            }
+            Ok(_) => (),
             Err(e) => {
                 // Task panicked.
                 return Err(Error::DownloadCrate {
-                    crate_name: name.to_string(),
-                    crate_version: version.to_string(),
+                    crate_name: crates[i].name().to_string(),
+                    crate_version: crates[i].version().to_string(),
                     error: Box::new(e),
                 });
             }
